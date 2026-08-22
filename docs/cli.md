@@ -27,7 +27,7 @@ picture see the [README](../README.md).
 ### `cliphistory serve`
 
 Run the daemon in the foreground: resolves/installs modules, starts the
-reader, binds the socket. Let a service manager background it
+clipboard module, binds the socket. Let a service manager background it
 (`exec-once` in Hyprland, systemd user unit in the README). Starting twice is
 refused while an instance is alive.
 
@@ -39,7 +39,7 @@ RUST_LOG=debug cliphistory serve   # verbose troubleshooting run
 ### `cliphistory show`
 
 Open the configured frontend picker over the last 100 entries. Selecting one
-pushes it back onto the clipboard (via the reader's write-back) and bumps its
+pushes it back onto the clipboard (via the clipboard module's write-back) and bumps its
 usage counter. Dismissing is never an error.
 
 This is the command to bind a key to:
@@ -94,7 +94,7 @@ Quick health summary of the running daemon:
 ```
 pid:       51234
 session:   wayland
-reader:    reader-wayland
+clipboard module:    clipboard-wayland
 frontend:  frontend-rofi
 entries:   317
 db:        /home/you/.local/share/cliphistory/history.db (204800 bytes)
@@ -110,12 +110,12 @@ anything misbehaves.
 ### `cliphistory discover`
 
 The same discovery ranking as the daemon would perform, but standalone —
-no daemon required. Prints which reader/frontend would be picked right now.
+no daemon required. Prints which clipboard module/frontend would be picked right now.
 Useful before installing anything.
 
 ### `cliphistory stop`
 
-Ask the daemon to shut down cleanly (reader stopped, socket removed).
+Ask the daemon to shut down cleanly (clipboard module stopped, socket removed).
 
 ### `cliphistory config init | path | print`
 
@@ -132,7 +132,7 @@ Module management without editing config files:
 ```sh
 cliphistory modules list                          # installed versions + requirements
 cliphistory modules install                       # whatever discovery wants
-cliphistory modules install reader-x11 frontend-wofi
+cliphistory modules install clipboard-x11 frontend-wofi
 cliphistory modules install --force frontend-rofi # reinstall even if current
 cliphistory modules update                        # chase channel/pins for everything installed
 cliphistory modules remove frontend-dmenu

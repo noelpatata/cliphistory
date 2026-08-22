@@ -4,9 +4,9 @@
 use anyhow::Result;
 use cliphistory_core::config::ModulesConfig;
 use cliphistory_core::plugins::{
-    AssetRef, ModuleManager, ReaderHandle, ReleaseManifest, RemoteModule, TargetAssets,
+    AssetRef, ClipboardHandle, ModuleManager, ReleaseManifest, RemoteModule, TargetAssets,
 };
-use cliphistory_proto::{HostToReader, ModuleKind, ReaderToHost, PROTOCOL_VERSION};
+use cliphistory_proto::{ClipboardToHost, HostToClipboard, ModuleKind, PROTOCOL_VERSION};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -20,9 +20,9 @@ fn sha256_file(p: &Path) -> String {
 
 /// A fake reader module: answers `--manifest`, then in `run` mode emits
 /// Ready and replies Pong until told to Stop.
-const FAKE_READER_TEMPLATE: &str = r#"#!/bin/sh
+const FAKE_CLIPBOARD_TEMPLATE: &str = r#"#!/bin/sh
 if [ "$1" = "--manifest" ]; then
-  printf '{"id":"reader-fake","kind":"reader","version":"v0.9.9","protocol_version":__PV__,"capabilities":["read","write"],"requires":[],"description":"fake"}\n'
+  printf '{"id":"clipboard-fake","kind":"clipboard","version":"v0.9.9","protocol_version":__PV__,"capabilities":["read","write"],"requires":[],"description":"fake"}\n'
   exit 0
 fi
 printf '{"type":"ready","protocol_version":__PV__}\n'
@@ -36,10 +36,10 @@ done
 
 fn write_fake_release(dir: &Path) -> Result<()> {
     fs::create_dir_all(dir)?;
-    let bin = dir.join("cliphistory-reader-fake-x86_64-unknown-linux-gnu");
+    let bin = dir.join("cliphistory-clipboard-fake-x86_64-unknown-linux-gnu");
     fs::write(
         &bin,
-        FAKE_READER_TEMPLATE.replace("__PV__", &PROTOCOL_VERSION.to_string()),
+        FAKE_CLIPBOARD_TEMPLATE.replace("__PV__", &PROTOCOL_VERSION.to_string()),
     )?;
     fs::set_permissions(&bin, fs::Permissions::from_mode(0o755))?;
 
@@ -54,13 +54,13 @@ fn write_fake_release(dir: &Path) -> Result<()> {
                     sha256: String::new(),
                 },
                 modules: vec![RemoteModule {
-                    id: "reader-fake".into(),
-                    kind: ModuleKind::Reader,
+                    id: "clipboard-fake".into(),
+                    kind: ModuleKind::Clipboard,
                     capabilities: vec!["read".into(), "write".into()],
                     requires: vec![],
                     description: "fake reader".into(),
                     file: AssetRef {
-                        path: "cliphistory-reader-fake-x86_64-unknown-linux-gnu".into(),
+                        path: "cliphistory-clipboard-fake-x86_64-unknown-linux-gnu".into(),
                         sha256: sha256_file(&bin),
                     },
                 }],
@@ -94,47 +94,50 @@ fn install_verify_spawn_lifecycle() -> Result<()> {
     assert!(mm.list_installed()?.is_empty());
 
     // Install through the full pipeline (download -> checksum -> activate).
-    for r in mm.ensure_available(&["reader-fake".into()], false, &|_| {}) {
+    for r in mm.ensure_available(&["clipboard-fake".into()], false, &|_| {}) {
         r.expect("install should succeed");
     }
 
     // Resolvable + correct manifest + version recorded.
-    let installed = mm.resolve("reader-fake").expect("module installed");
-    assert_eq!(installed.manifest.id, "reader-fake");
+    let installed = mm.resolve("clipboard-fake").expect("module installed");
+    assert_eq!(installed.manifest.id, "clipboard-fake");
     assert_eq!(installed.version, "v0.9.9");
     let listed = mm.list_installed()?;
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].version, "v0.9.9");
 
     // Idempotent ensure_available.
-    let again = mm.ensure_available(&["reader-fake".into()], false, &|_| {});
+    let again = mm.ensure_available(&["clipboard-fake".into()], false, &|_| {});
     assert!(again[0]
         .as_ref()
         .expect("second pass")
-        .starts_with("reader-fake: already installed"));
+        .starts_with("clipboard-fake: already installed"));
 
     // Spawn + protocol handshake + ping/pong + stop round trip.
-    let mut handle = ReaderHandle::spawn(&installed)?;
-    let (tx, rx) = mpsc::channel::<ReaderToHost>();
-    ReaderHandle::pump_output(&mut handle.child, tx)?;
+    let mut handle = ClipboardHandle::spawn(&installed)?;
+    let (tx, rx) = mpsc::channel::<ClipboardToHost>();
+    ClipboardHandle::pump_output(&mut handle.child, tx)?;
 
     match rx.recv_timeout(Duration::from_secs(5))? {
-        ReaderToHost::Ready { protocol_version } => {
+        ClipboardToHost::Ready { protocol_version } => {
             assert_eq!(protocol_version, PROTOCOL_VERSION);
         }
         other => panic!("expected Ready, got {other:?}"),
     }
 
-    handle.send(HostToReader::Ping)?;
-    assert_eq!(rx.recv_timeout(Duration::from_secs(5))?, ReaderToHost::Pong);
+    handle.send(HostToClipboard::Ping)?;
+    assert_eq!(
+        rx.recv_timeout(Duration::from_secs(5))?,
+        ClipboardToHost::Pong
+    );
 
-    handle.send(HostToReader::Stop)?;
+    handle.send(HostToClipboard::Stop)?;
     let status = handle.child.wait()?;
     assert!(status.success());
 
     // Uninstall removes everything.
-    mm.uninstall("reader-fake")?;
-    assert!(mm.resolve("reader-fake").is_none());
+    mm.uninstall("clipboard-fake")?;
+    assert!(mm.resolve("clipboard-fake").is_none());
     assert!(mm.list_installed()?.is_empty());
     Ok(())
 }
@@ -146,7 +149,7 @@ fn corrupt_download_is_rejected() -> Result<()> {
     write_fake_release(&source_dir)?;
 
     // Tamper with the artifact after the manifest was written.
-    let bin = source_dir.join("cliphistory-reader-fake-x86_64-unknown-linux-gnu");
+    let bin = source_dir.join("cliphistory-clipboard-fake-x86_64-unknown-linux-gnu");
     fs::write(&bin, b"tampered payload")?;
 
     let cfg = ModulesConfig {
@@ -156,7 +159,7 @@ fn corrupt_download_is_rejected() -> Result<()> {
     };
     let mm = ModuleManager::new(cfg);
 
-    let results = mm.ensure_available(&["reader-fake".into()], false, &|_| {});
+    let results = mm.ensure_available(&["clipboard-fake".into()], false, &|_| {});
     let err = results.into_iter().next().unwrap().expect_err("must fail");
     let msg = format!("{err:#}");
     assert!(
@@ -167,7 +170,7 @@ fn corrupt_download_is_rejected() -> Result<()> {
         "unexpected error: {msg}"
     );
     assert!(
-        mm.resolve("reader-fake").is_none(),
+        mm.resolve("clipboard-fake").is_none(),
         "nothing must be installed on failure"
     );
     Ok(())

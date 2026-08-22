@@ -87,7 +87,7 @@ Notes:
 
 ## `[discovery]`
 
-Discovery decides *which* reader and frontend modules run on this machine.
+Discovery decides *which* clipboard module and frontend modules run on this machine.
 It inspects `$XDG_SESSION_TYPE` (falling back to `$WAYLAND_DISPLAY` /
 `$DISPLAY`), probes external tools declared by each module manifest, ranks
 candidates and picks the winner. See the result any time with:
@@ -99,7 +99,7 @@ cliphistory doctor     # full report incl. tool probe results
 
 | Key                  | Type   | Default | Description |
 |----------------------|--------|---------|-------------|
-| `preferred_reader`   | string | *(unset)* | Force a reader module id (e.g. `"reader-x11"`). It wins over ranking and is downloaded automatically if missing. |
+| `preferred_clipboard`   | string | *(unset)* | Force a clipboard module module id (e.g. `"clipboard-x11"`). It wins over ranking and is downloaded automatically if missing. |
 | `preferred_frontend` | string | *(unset)* | Force a frontend module id (e.g. `"frontend-wofi"`). Same semantics. |
 | `strict`             | bool   | `false` | When `true`, a candidate whose required tools are missing is skipped entirely instead of being used as a fallback. |
 
@@ -109,8 +109,8 @@ Ranking rules, in order:
 2. Candidates whose requirements are satisfied beat candidates with missing
    tools.
 3. Static priority order per kind:
-   readers — `reader-wayland` > `reader-x11` (session-filtered: a Wayland
-   session never considers `reader-x11`); frontends —
+   clipboard modules — `clipboard-wayland` > `clipboard-x11` (session-filtered: a Wayland
+   session never considers `clipboard-x11`); frontends —
    `frontend-rofi` > `frontend-wofi` > `frontend-dmenu`.
 
 ---
@@ -127,7 +127,7 @@ How modules are sourced, updated and where they live.
 | `install_dir`       | path     | `$XDG_DATA_HOME/cliphistory/modules`              | Installation root. Layout: `<dir>/<module-id>/<tag>/` with a `current` symlink. Ignored when `local_dir` is set. |
 | `local_dir`         | path     | *(unset)*                                      | **Dev mode**: use module binaries straight from this directory (e.g. `../target/debug`) and disable all downloading/updating. |
 | `platform_override` | string   | *(auto-detected)*                              | Force the release-manifest target triple, e.g. `"x86_64-unknown-linux-musl"` to prefer musl builds on glibc systems. Auto-detection tries `<arch>-unknown-linux-gnu` then `<arch>-unknown-linux-musl`. |
-| `[modules.pins]`    | table    | *(empty)*                                      | Pin individual modules to tags: `reader-wayland = "v0.1.0"`. A pin is enforced whenever the daemon starts or you run `cliphistory modules update` — a mismatching installed version is replaced. |
+| `[modules.pins]`    | table    | *(empty)*                                      | Pin individual modules to tags: `clipboard-wayland = "v0.1.0"`. A pin is enforced whenever the daemon starts or you run `cliphistory modules update` — a mismatching installed version is replaced. |
 
 Download safety model: artifacts are fetched over HTTPS, verified against the
 sha256 checksum recorded in the release's `manifest.json`, staged in a temp
@@ -138,7 +138,7 @@ Manual control without editing config:
 
 ```sh
 cliphistory modules install                       # whatever discovery wants
-cliphistory modules install reader-wayland frontend-rofi
+cliphistory modules install clipboard-wayland frontend-rofi
 cliphistory modules install --force frontend-rofi # reinstall current version
 cliphistory modules update                        # chase the channel/pins
 cliphistory modules remove frontend-dmenu
@@ -159,7 +159,7 @@ you pin them.
 ### Development loop
 
 ```sh
-cargo build -p cliphistory-reader-wayland -p cliphistory-frontend-rofi
+cargo build -p cliphistory-clipboard-wayland -p cliphistory-frontend-rofi
 ```
 
 ```toml
@@ -211,14 +211,14 @@ preferred_frontend = "frontend-rofi"
 extra_args = ["-theme", "~/.config/rofi/cliphistory.rasi"]
 ```
 
-Everything else auto-discovers: `reader-wayland` is chosen because the session
+Everything else auto-discovers: `clipboard-wayland` is chosen because the session
 is Wayland, and both modules are pulled from GitHub Releases on first start.
 
 ### X11 desktop, minimal menu
 
 ```toml
 [discovery]
-preferred_reader = "reader-x11"
+preferred_clipboard = "clipboard-x11"
 preferred_frontend = "frontend-dmenu"
 strict = true
 ```
@@ -241,7 +241,7 @@ channel = "stable"
 auto_update = false
 
 [modules.pins]
-reader-wayland = "v0.1.0"
+clipboard-wayland = "v0.1.0"
 frontend-rofi = "v0.1.0"
 ```
 
@@ -251,8 +251,8 @@ frontend-rofi = "v0.1.0"
 
 | Symptom | Fix |
 |---------|-----|
-| `no usable reader module` on start | Run `cliphistory doctor`. Usually missing tools (`xclip`) or no graphical session. Install the tool using the printed distro hint. |
-| Wrong module picked | Set `preferred_reader` / `preferred_frontend`, then `cliphistory stop && cliphistory serve`. |
+| `no usable clipboard module module` on start | Run `cliphistory doctor`. Usually missing tools (`xclip`) or no graphical session. Install the tool using the printed distro hint. |
+| Wrong module picked | Set `preferred_clipboard` / `preferred_frontend`, then `cliphistory stop && cliphistory serve`. |
 | Downloads fail behind a proxy/fork | Point `source_url` at your mirror, or pre-install with `file://` source. |
 | musl/glibc mismatch error mentioning targets | Set `modules.platform_override` to the triple that exists in the release manifest. |
 | Config change did nothing | The daemon caches config at startup: `cliphistory stop && cliphistory serve`. Verify effective values with `cliphistory config print`. |

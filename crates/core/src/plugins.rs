@@ -14,8 +14,8 @@ use crate::config::ModulesConfig;
 use crate::constants as c;
 use anyhow::{anyhow, bail, Context, Result};
 use cliphistory_proto::{
-    HistoryItem, HostToReader, ModuleKind, ModuleManifest, ReaderToHost, ShowRequest, ShowResponse,
-    PROTOCOL_VERSION,
+    ClipboardToHost, HistoryItem, HostToClipboard, ModuleKind, ModuleManifest, ShowRequest,
+    ShowResponse, PROTOCOL_VERSION,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -521,12 +521,12 @@ pub fn run_frontend(
 }
 
 /// Writer half of a running reader: sends control frames on stdin.
-pub struct ReaderHandle {
+pub struct ClipboardHandle {
     pub child: Child,
-    pub(crate) tx: Sender<HostToReader>,
+    pub(crate) tx: Sender<HostToClipboard>,
 }
 
-impl ReaderHandle {
+impl ClipboardHandle {
     pub fn spawn(module: &InstalledModule) -> Result<Self> {
         let mut child = Command::new(&module.bin_path)
             .arg("run")
@@ -540,7 +540,7 @@ impl ReaderHandle {
             .stdin
             .take()
             .ok_or_else(|| anyhow!("reader stdin unavailable"))?;
-        let (tx, rx) = std::sync::mpsc::channel::<HostToReader>();
+        let (tx, rx) = std::sync::mpsc::channel::<HostToClipboard>();
         std::thread::Builder::new()
             .name("reader-stdin".into())
             .spawn(move || {
@@ -552,7 +552,7 @@ impl ReaderHandle {
                     if w.write_all(b"\n").is_err() {
                         break;
                     }
-                    if matches!(frame, HostToReader::Stop) {
+                    if matches!(frame, HostToClipboard::Stop) {
                         break;
                     }
                 }
@@ -561,14 +561,14 @@ impl ReaderHandle {
     }
 
     /// Queue a control frame for the reader's stdin.
-    pub fn send(&self, frame: HostToReader) -> Result<()> {
+    pub fn send(&self, frame: HostToClipboard) -> Result<()> {
         self.tx
             .send(frame)
             .map_err(|_| anyhow::anyhow!("reader stdin closed"))
     }
 
     /// Spawn a thread parsing NDJSON stdout frames into a channel.
-    pub fn pump_output(child: &mut Child, out: Sender<ReaderToHost>) -> Result<()> {
+    pub fn pump_output(child: &mut Child, out: Sender<ClipboardToHost>) -> Result<()> {
         let stdout = child
             .stdout
             .take()
@@ -581,7 +581,7 @@ impl ReaderHandle {
                     if line.trim().is_empty() {
                         continue;
                     }
-                    match serde_json::from_str::<ReaderToHost>(&line) {
+                    match serde_json::from_str::<ClipboardToHost>(&line) {
                         Ok(frame) => {
                             if out.send(frame).is_err() {
                                 break;

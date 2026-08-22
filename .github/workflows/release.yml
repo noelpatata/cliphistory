@@ -56,7 +56,7 @@ jobs:
         run: |
           mkdir -p out
           cd "target/${{ matrix.target }}/release"
-          for bin in cliphistory cliphistory-reader-* cliphistory-frontend-*; do
+          for bin in cliphistory cliphistory-clipboard-* cliphistory-frontend-*; do
             # -f: exists; -x: executables only (skips rustc's *.d dep-info files)
             [ -f "$bin" ] && [ -x "$bin" ] && cp "$bin" \
               "../../../out/${{ matrix.target }}__${bin}"
@@ -105,7 +105,7 @@ jobs:
         if: steps.ver.outputs.exists == 'no'
         run: |
           mkdir -p meta
-          for bin in target/release/cliphistory-reader-* target/release/cliphistory-frontend-*; do
+          for bin in target/release/cliphistory-clipboard-* target/release/cliphistory-frontend-*; do
             # executables only — skip *.d dep-info files rustc leaves behind
             [ -f "$bin" ] && [ -x "$bin" ] || continue
             base="$(basename "$bin")"
@@ -142,7 +142,7 @@ jobs:
               with open(path) as f:
                   m = json.load(f)
               meta[m["id"]] = {
-                  "kind": m.get("kind", "reader"),
+                  "kind": m.get("kind", "clipboard"),
                   "capabilities": m.get("capabilities", []),
                   "requires": m.get("requires", []),
                   "description": m.get("description", ""),
@@ -168,7 +168,7 @@ jobs:
                   module_id = binary.removeprefix("cliphistory-")
                   info = meta.get(module_id)
                   kind = info["kind"] if info else (
-                      "reader" if module_id.startswith("reader-") else "frontend")
+                      "reader" if module_id.startswith("clipboard-") else "frontend")
                   entry["modules"].append({
                       "id": module_id,
                       "kind": kind,
@@ -196,6 +196,6 @@ jobs:
         run: |
           gh release create "$TAG" \
             --title "cliphistory ${TAG}" \
-            --notes "Modules are downloaded automatically by the daemon on first start. Manual install: \`cliphistory modules install reader-wayland frontend-rofi\`. manifest.json lists every artifact with its sha256 checksum." \
+            --notes "Modules are downloaded automatically by the daemon on first start. Manual install: \`cliphistory modules install clipboard-wayland frontend-rofi\`. manifest.json lists every artifact with its sha256 checksum." \
             --target "$GITHUB_SHA" \
             dist/*

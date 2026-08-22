@@ -69,8 +69,8 @@ impl StorageConfig {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DiscoveryConfig {
-    /// Force a specific module id, e.g. `reader-wayland`. Empty = auto.
-    pub preferred_reader: Option<String>,
+    /// Force a specific module id, e.g. `clipboard-wayland`. Empty = auto.
+    pub preferred_clipboard: Option<String>,
     /// Force a specific frontend id, e.g. `frontend-rofi`. Empty = auto.
     pub preferred_frontend: Option<String>,
     /// Fail instead of falling back when requirements are unmet.
@@ -92,7 +92,7 @@ pub struct ModulesConfig {
     /// Development override: directory containing freshly built module
     /// binaries; disables downloads entirely.
     pub local_dir: Option<PathBuf>,
-    /// Pin individual modules to tags, e.g. `reader-wayland = "v0.2.1"`.
+    /// Pin individual modules to tags, e.g. `clipboard-wayland = "v0.2.1"`.
     pub pins: std::collections::BTreeMap<String, String>,
     /// Force a release-manifest target triple (e.g. musl on glibc systems).
     pub platform_override: Option<String>,
@@ -245,7 +245,7 @@ max_item_size = {max_item}      # bytes; larger payloads are ignored
 max_age_days = 0                # 0 = keep forever
 
 [discovery]
-# preferred_reader = "reader-wayland"     # omit for automatic detection
+# preferred_clipboard = "clipboard-wayland"     # omit for automatic detection
 # preferred_frontend = "frontend-rofi"
 strict = false                  # error instead of fallback when tools missing
 
@@ -258,7 +258,7 @@ auto_update = false
 # platform_override = "x86_64-unknown-linux-musl"
 
 [modules.pins]
-# reader-wayland = "v0.1.0"
+# clipboard-wayland = "v0.1.0"
 
 [frontend]
 extra_args = []                 # e.g. ["-theme", "~/.config/rofi/cliphistory.rasi"]

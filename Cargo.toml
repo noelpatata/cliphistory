@@ -3,9 +3,9 @@ resolver = "2"
 members = [
     "crates/proto",
     "crates/core",
-    "crates/modules/reader-common",
-    "crates/modules/reader-wayland",
-    "crates/modules/reader-x11",
+    "crates/modules/clipboard-common",
+    "crates/modules/clipboard-wayland",
+    "crates/modules/clipboard-x11",
     "crates/modules/frontend-common",
     "crates/modules/frontend-rofi",
     "crates/modules/frontend-wofi",
@@ -13,7 +13,7 @@ members = [
 ]
 
 [workspace.package]
-version = "1.0.1"
+version = "1.0.2"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/noelpatata/cliphistory"
@@ -21,7 +21,7 @@ authors = ["cliphistory contributors"]
 
 [workspace.dependencies]
 cliphistory-proto = { path = "crates/proto" }
-cliphistory-reader-common = { path = "crates/modules/reader-common" }
+cliphistory-clipboard-common = { path = "crates/modules/clipboard-common" }
 cliphistory-frontend-common = { path = "crates/modules/frontend-common" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

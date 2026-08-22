@@ -1,5 +1,5 @@
 [package]
-name = "cliphistory-reader-common"
+name = "cliphistory-clipboard-common"
 description = "Shared plumbing for cliphistory reader modules"
 version.workspace = true
 edition.workspace = true

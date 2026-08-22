@@ -254,12 +254,12 @@ fn modules_cmd(cmd: ModulesCommand, cfg: &Config) -> Result<i32> {
             }
             for m in mods {
                 println!(
-                    "{:<18} v{:<10} caps=[{}] requires=[{}]",
+                    "{:<20} {:<10} caps=[{}] requires=[{}]",
                     m.manifest.id,
                     if m.version.is_empty() {
-                        "local"
+                        "local".to_string()
                     } else {
-                        &m.version
+                        m.version.trim_start_matches('v').to_string()
                     },
                     m.manifest.capabilities.join(","),
                     m.manifest.requires.join(",")
@@ -336,7 +336,7 @@ fn resolve_target_ids(mm: &ModuleManager, cfg: &Config, ids: Vec<String>) -> Res
     if targets.is_empty() {
         // Nothing installed yet -> offer every known candidate.
         let session = discovery::detect_session(&discovery::RealEnv);
-        targets.extend(session.reader_candidates().iter().map(|s| s.to_string()));
+        targets.extend(session.clipboard_candidates().iter().map(|s| s.to_string()));
         targets.extend(c::FRONTEND_CANDIDATES.iter().map(|s| s.to_string()));
     }
     Ok(targets)
