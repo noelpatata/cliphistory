@@ -10,7 +10,7 @@ name: Release
 #      build so the published manifest carries true requirements,
 #   4. generates a manifest.json (paths + sha256 + protocol version),
 #   5. publishes a GitHub release tagged v<version> with all artifacts so
-#      the clipwell downloader can fetch modules at runtime.
+#      the cliphistory downloader can fetch modules at runtime.
 
 on:
   push:
@@ -55,7 +55,7 @@ jobs:
           out="dist/${{ matrix.target }}"
           mkdir -p "$out"
           cd "target/${{ matrix.target }}/release"
-          for bin in clipwell clipwell-reader-* clipwell-frontend-*; do
+          for bin in cliphistory cliphistory-reader-* cliphistory-frontend-*; do
             [ -f "$bin" ] && cp "$bin" "../../../$out/"
           done
           cd -
@@ -103,7 +103,7 @@ jobs:
         if: steps.ver.outputs.exists == 'no'
         run: |
           mkdir -p meta
-          for bin in target/release/clipwell-reader-* target/release/clipwell-frontend-*; do
+          for bin in target/release/cliphistory-reader-* target/release/cliphistory-frontend-*; do
             [ -f "$bin" ] || continue
             base="$(basename "$bin")"
             "$bin" --manifest > "meta/${base}.json"
@@ -168,10 +168,10 @@ jobs:
               triple, binary = name.split("__", 1)
               entry = targets.setdefault(triple, {"core": None, "modules": []})
               ref = {"path": name, "sha256": sha256(f"dist/{name}")}
-              if binary == "clipwell":
+              if binary == "cliphistory":
                   entry["core"] = ref
               else:
-                  module_id = binary.removeprefix("clipwell-")
+                  module_id = binary.removeprefix("cliphistory-")
                   info = meta.get(module_id)
                   kind = info["kind"] if info else (
                       "reader" if module_id.startswith("reader-") else "frontend")
@@ -201,7 +201,7 @@ jobs:
           TAG: ${{ steps.ver.outputs.tag }}
         run: |
           gh release create "$TAG" \
-            --title "clipwell ${TAG}" \
-            --notes "Modules are downloaded automatically by the daemon on first start. Manual install: \`clipwell modules install reader-wayland frontend-rofi\`. manifest.json lists every artifact with its sha256 checksum." \
+            --title "cliphistory ${TAG}" \
+            --notes "Modules are downloaded automatically by the daemon on first start. Manual install: \`cliphistory modules install reader-wayland frontend-rofi\`. manifest.json lists every artifact with its sha256 checksum." \
             --target "$GITHUB_SHA" \
             dist/*
