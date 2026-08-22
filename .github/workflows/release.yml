@@ -50,24 +50,25 @@ jobs:
       - name: Build workspace
         run: cross build --release --target ${{ matrix.target }} --workspace
 
+      # Files are pre-named <triple>__<binary> so merging all artifacts into
+      # one flat directory cannot collide between targets.
       - name: Stage artifacts
         run: |
-          out="dist/${{ matrix.target }}"
-          mkdir -p "$out"
+          mkdir -p out
           cd "target/${{ matrix.target }}/release"
           for bin in cliphistory cliphistory-reader-* cliphistory-frontend-*; do
             # -f: exists; -x: executables only (skips rustc's *.d dep-info files)
-            [ -f "$bin" ] && [ -x "$bin" ] && cp "$bin" "../../../$out/"
+            [ -f "$bin" ] && [ -x "$bin" ] && cp "$bin" \
+              "../../../out/${{ matrix.target }}__${bin}"
           done
           cd -
-          ls -la "$out"
+          ls -la out
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: dist-${{ matrix.target }}
-          path: dist/${{ matrix.target }}
-          retention-days: 3
+          path: out
 
   release:
     needs: build
@@ -119,17 +120,8 @@ jobs:
           path: dist
           pattern: dist-*
           merge-multiple: true
-
-      - name: Flatten artifact directories
-        if: steps.ver.outputs.exists == 'no'
-        run: |
-          cd dist
-          for t in */; do
-            target="${t%/}"
-            mv "$target"/* "./${target}__" || true
-            rmdir "$target"
-          done
-          ls -la
+      # Artifacts arrive pre-flattened as dist/<triple>__<binary> — no
+      # directory surgery needed; cross-target collisions impossible.
 
       - name: Generate manifest.json
         if: steps.ver.outputs.exists == 'no'
