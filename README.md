@@ -8,7 +8,7 @@ and push any of them back onto the clipboard.
 
 ```
 ┌────────────┐   events    ┌──────────────────────────────────────────┐
-│ reader-*   │────────────▶│                 core                     │
+│ clipboard-*   │────────────▶│                 core                     │
 │ (wayland)  │             │  engine · storage · discovery · plugins  │◀── CLI
 │ (x11)      │◀────────────│                                          │
 └────────────┘ write-back  └─────────────▲────────────────────────────┘
@@ -31,7 +31,7 @@ and push any of them back onto the clipboard.
 - **Self-configuring** – on start, discovery detects your session
   (`XDG_SESSION_TYPE`, `$WAYLAND_DISPLAY`, `$DISPLAY`), probes external tools,
   ranks candidate modules (config preferences win) and downloads exactly the
-  ones it needs from GitHub Releases — never a Wayland reader on an X11 box.
+  ones it needs from GitHub Releases — never a Wayland clipboard module on an X11 box.
 - **Configurable** – every behaviour-affecting knob lives in
   `~/.config/cliphistory/config.toml`; true constants live in one Rust file.
 
@@ -110,7 +110,7 @@ max_item_size = 5242880       # bytes; larger payloads are ignored
 max_age_days = 0              # 0 = keep forever
 
 [discovery]
-# preferred_reader = "reader-wayland"
+# preferred_clipboard = "clipboard-wayland"
 # preferred_frontend = "frontend-rofi"
 strict = false                # fail instead of falling back when tools miss
 
@@ -122,7 +122,7 @@ auto_update = false
 # platform_override = "x86_64-unknown-linux-musl"
 
 [modules.pins]
-# reader-wayland = "v0.1.0"   # pin individual modules to tags
+# clipboard-wayland = "v0.1.0"   # pin individual modules to tags
 
 [frontend]
 extra_args = []               # passed to every frontend invocation
@@ -135,7 +135,7 @@ A module is any executable answering two commands:
 | Invocation        | Behaviour                                                                 |
 |-------------------|---------------------------------------------------------------------------|
 | `--manifest`      | print one `ModuleManifest` JSON document                                  |
-| `run …`           | readers: NDJSON frames on stdout, control frames on stdin; frontends: one `ShowRequest` JSON on stdin, one `ShowResponse` JSON on stdout |
+| `run …`           | clipboards: NDJSON frames on stdout, control frames on stdin; frontends: one `ShowRequest` JSON on stdin, one `ShowResponse` JSON on stdout |
 
 Reader frames (`crates/proto/src/lib.rs`):
 
@@ -161,7 +161,7 @@ Release manifests published by CI look like:
   "targets": {
     "x86_64-unknown-linux-gnu": {
       "core": {"path": "…", "sha256": "…"},
-      "modules": [{"id": "reader-wayland", "kind": "reader", "requires": [],
+      "modules": [{"id": "clipboard-wayland", "kind": "clipboard", "requires": [],
                    "file": {"path": "…", "sha256": "…" }}]
     }
   }
@@ -184,11 +184,11 @@ C code is SQLite, bundled via the `rusqlite` `bundled` feature.
 cargo build                        # fast debug build (what you iterate with)
 cargo build --release              # optimised binaries in target/release/
 cargo build -p cliphistory-core       # just the daemon/CLI
-cargo build -p cliphistory-reader-wayland -p cliphistory-frontend-rofi   # select modules
+cargo build -p cliphistory-clipboard-wayland -p cliphistory-frontend-rofi   # select modules
 ```
 
 Binaries produced: `cliphistory` plus one per module
-(`cliphistory-reader-wayland`, `cliphistory-reader-x11`, `cliphistory-frontend-{rofi,wofi,dmenu}`).
+(`cliphistory-clipboard-wayland`, `cliphistory-clipboard-x11`, `cliphistory-frontend-{rofi,wofi,dmenu}`).
 
 ### Tests
 
@@ -244,7 +244,7 @@ Then restart the daemon after each rebuild — modules are spawned fresh at
 startup. You can also exercise any module binary directly:
 
 ```sh
-./target/debug/cliphistory-reader-wayland --manifest      # self-description JSON
+./target/debug/cliphistory-clipboard-wayland --manifest      # self-description JSON
 ./target/debug/cliphistory-frontend-rofi run <<< '{"entries":[{"id":1,"kind":"text","mime":"text/plain","preview":"hello","size_bytes":5,"created_at":0,"use_count":0,"pinned":false}]}'
 ```
 
@@ -267,9 +267,9 @@ crates/
 ├── core/                     # `cliphistory` binary + library
 │   └── src/{constants,config,storage,discovery,plugins,engine,ipc,cli}.rs
 └── modules/
-    ├── reader-common/        # shared reader plumbing
-    ├── reader-wayland/       # wl-clipboard-rs, no external deps
-    ├── reader-x11/           # xclip polling
+    ├── clipboard-common/        # shared clipboard module plumbing
+    ├── clipboard-wayland/       # wl-clipboard-rs, no external deps
+    ├── clipboard-x11/           # xclip polling
     ├── frontend-common/      # shared menu plumbing
     ├── frontend-rofi/ wofi/ dmenu/
 ```

@@ -14,10 +14,10 @@ use crate::discovery::{
     self, detect_session, probe_requirements, probe_tool, InstalledInfo, RealEnv,
 };
 use crate::ipc::{DaemonStatus, IpcRequest, IpcResponse, ModuleInfo};
-use crate::plugins::{InstalledModule, ModuleManager, ReaderHandle};
+use crate::plugins::{ClipboardHandle, InstalledModule, ModuleManager};
 use crate::storage::{unix_now, Storage};
 use anyhow::{bail, Context, Result};
-use cliphistory_proto::{HostToReader, ReaderToHost, PROTOCOL_VERSION};
+use cliphistory_proto::{ClipboardToHost, HostToClipboard, PROTOCOL_VERSION};
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -33,8 +33,8 @@ struct Shared {
     cfg: Config,
     storage: Arc<Storage>,
     mm: Arc<ModuleManager>,
-    reader_tx: Arc<RwLock<Option<Sender<HostToReader>>>>,
-    reader_id: Arc<RwLock<String>>,
+    clipboard_tx: Arc<RwLock<Option<Sender<HostToClipboard>>>>,
+    clipboard_id: Arc<RwLock<String>>,
     frontend_id: Arc<RwLock<String>>,
     started_at: u64,
     session: discovery::SessionType,
@@ -42,9 +42,9 @@ struct Shared {
 }
 
 enum AppEvent {
-    FromReader(ReaderToHost),
+    FromReader(ClipboardToHost),
     Conn(UnixStream),
-    ReaderExited(String),
+    ClipboardExited(String),
     RestartReader,
     Shutdown,
 }
@@ -85,8 +85,8 @@ fn run_inner(cfg: Config, socket_path: std::path::PathBuf) -> Result<()> {
     let mut shared = Shared {
         storage: storage.clone(),
         mm: mm.clone(),
-        reader_tx: Arc::new(RwLock::new(None)),
-        reader_id: Arc::new(RwLock::new(String::new())),
+        clipboard_tx: Arc::new(RwLock::new(None)),
+        clipboard_id: Arc::new(RwLock::new(String::new())),
         frontend_id: Arc::new(RwLock::new(String::new())),
         started_at: unix_now(),
         session: detect_session(&RealEnv),
@@ -121,14 +121,14 @@ fn run_inner(cfg: Config, socket_path: std::path::PathBuf) -> Result<()> {
     }
 
     // ----- reader -----------------------------------------------------------
-    if !shared.reader_id.read().unwrap().is_empty() {
-        start_reader(&shared);
+    if !shared.clipboard_id.read().unwrap().is_empty() {
+        start_clipboard(&shared);
     }
 
     // ----- main loop ----------------------------------------------------------
     while let Ok(event) = app_rx.recv() {
         match event {
-            AppEvent::FromReader(ReaderToHost::Event { content }) => {
+            AppEvent::FromReader(ClipboardToHost::Event { content }) => {
                 match shared
                     .storage
                     .insert(&content, shared.cfg.storage.max_item_size)
@@ -149,14 +149,17 @@ fn run_inner(cfg: Config, socket_path: std::path::PathBuf) -> Result<()> {
                     Err(e) => log::error!("insert failed: {e:#}"),
                 }
             }
+            AppEvent::FromReader(ClipboardToHost::Error { message }) => {
+                log::warn!("clipboard module reported: {message}");
+            }
             AppEvent::FromReader(frame) => {
-                log::debug!("reader frame: {frame:?}");
+                log::debug!("clipboard module frame: {frame:?}");
             }
             AppEvent::Conn(stream) => {
                 handle_conn(&shared, stream);
             }
-            AppEvent::ReaderExited(id) => schedule_restart(&shared, &id),
-            AppEvent::RestartReader => start_reader(&shared),
+            AppEvent::ClipboardExited(id) => schedule_restart(&shared, &id),
+            AppEvent::RestartReader => start_clipboard(&shared),
             AppEvent::Shutdown => break,
         }
     }
@@ -195,10 +198,10 @@ fn remote_candidates(shared: &Shared) -> Option<(Option<String>, Option<String>)
         .collect();
 
     let reader = discovery::rank_candidates(
-        shared.session.reader_candidates(),
+        shared.session.clipboard_candidates(),
         &pseudo,
-        shared.cfg.discovery.preferred_reader.as_deref(),
-        cliphistory_proto::ModuleKind::Reader,
+        shared.cfg.discovery.preferred_clipboard.as_deref(),
+        cliphistory_proto::ModuleKind::Clipboard,
     )
     .into_iter()
     .next();
@@ -231,7 +234,7 @@ fn select_modules(shared: &mut Shared) -> Result<()> {
 
     let reader_pick = pick(
         &report.readers,
-        shared.cfg.discovery.preferred_reader.as_deref(),
+        shared.cfg.discovery.preferred_clipboard.as_deref(),
     );
     let frontend_pick = pick(
         &report.frontends,
@@ -254,7 +257,7 @@ fn select_modules(shared: &mut Shared) -> Result<()> {
                 wanted.extend(
                     shared
                         .session
-                        .reader_candidates()
+                        .clipboard_candidates()
                         .iter()
                         .map(|s| s.to_string()),
                 );
@@ -294,18 +297,18 @@ fn select_modules(shared: &mut Shared) -> Result<()> {
     let infos = to_installed_infos(&installed);
 
     let choose_reader = || -> Option<String> {
-        let cands = shared.session.reader_candidates();
+        let cands = shared.session.clipboard_candidates();
         let mut ranked = discovery::rank_candidates(
             cands,
             &infos,
-            shared.cfg.discovery.preferred_reader.as_deref(),
-            cliphistory_proto::ModuleKind::Reader,
+            shared.cfg.discovery.preferred_clipboard.as_deref(),
+            cliphistory_proto::ModuleKind::Clipboard,
         );
         if ranked.is_empty() {
             // Fall back to any installed reader-capable module.
             ranked = installed
                 .iter()
-                .filter(|m| m.manifest.kind == cliphistory_proto::ModuleKind::Reader)
+                .filter(|m| m.manifest.kind == cliphistory_proto::ModuleKind::Clipboard)
                 .map(|m| m.manifest.id.clone())
                 .collect();
         }
@@ -325,10 +328,10 @@ fn select_modules(shared: &mut Shared) -> Result<()> {
     let reader = choose_reader();
     let frontend = choose_frontend();
 
-    *shared.reader_id.write().unwrap() = reader.unwrap_or_default();
+    *shared.clipboard_id.write().unwrap() = reader.unwrap_or_default();
     *shared.frontend_id.write().unwrap() = frontend.unwrap_or_default();
 
-    if shared.reader_id.read().unwrap().is_empty() {
+    if shared.clipboard_id.read().unwrap().is_empty() {
         log::warn!("no usable reader module; run `cliphistory doctor`");
     }
     if shared.frontend_id.read().unwrap().is_empty() {
@@ -367,8 +370,8 @@ pub(crate) fn to_installed_infos(installed: &[InstalledModule]) -> Vec<Installed
 // Reader lifecycle
 // ---------------------------------------------------------------------------
 
-fn start_reader(shared: &Shared) {
-    let id = shared.reader_id.read().unwrap().clone();
+fn start_clipboard(shared: &Shared) {
+    let id = shared.clipboard_id.read().unwrap().clone();
     if id.is_empty() {
         return;
     }
@@ -376,23 +379,23 @@ fn start_reader(shared: &Shared) {
         Some(m) => m,
         None => {
             log::error!("reader '{id}' vanished; disabling until restart");
-            *shared.reader_id.write().unwrap() = String::new();
+            *shared.clipboard_id.write().unwrap() = String::new();
             return;
         }
     };
 
     let mut attempts = 0u32;
     loop {
-        match ReaderHandle::spawn(&module) {
+        match ClipboardHandle::spawn(&module) {
             Ok(handle) => {
                 let mut child = handle.child;
                 let tx = handle.tx;
-                *shared.reader_tx.write().unwrap() = Some(tx.clone());
+                *shared.clipboard_tx.write().unwrap() = Some(tx.clone());
                 log::info!("reader '{id}' started");
 
-                let (out_tx, out_rx) = channel::<ReaderToHost>();
+                let (out_tx, out_rx) = channel::<ClipboardToHost>();
                 let app_tx = shared.app_tx.clone();
-                if let Err(e) = ReaderHandle::pump_output(&mut child, out_tx) {
+                if let Err(e) = ClipboardHandle::pump_output(&mut child, out_tx) {
                     log::error!("pump failed: {e:#}");
                 }
                 std::thread::Builder::new()
@@ -413,7 +416,7 @@ fn start_reader(shared: &Shared) {
                     .spawn(move || {
                         let status = child.wait();
                         log::warn!("reader exited: {:?}", status);
-                        let _ = sup_tx.send(AppEvent::ReaderExited(id));
+                        let _ = sup_tx.send(AppEvent::ClipboardExited(id));
                     })
                     .ok();
                 return;
@@ -422,15 +425,15 @@ fn start_reader(shared: &Shared) {
                 attempts += 1;
                 log::error!(
                     "spawning reader '{id}' failed ({attempts}/{}): {e:#}",
-                    c::READER_MAX_SPAWN_ATTEMPTS
+                    c::CLIPBOARD_MAX_SPAWN_ATTEMPTS
                 );
-                if attempts >= c::READER_MAX_SPAWN_ATTEMPTS {
+                if attempts >= c::CLIPBOARD_MAX_SPAWN_ATTEMPTS {
                     log::error!("giving up on reader '{id}'; run `cliphistory doctor`");
-                    *shared.reader_id.write().unwrap() = String::new();
-                    *shared.reader_tx.write().unwrap() = None;
+                    *shared.clipboard_id.write().unwrap() = String::new();
+                    *shared.clipboard_tx.write().unwrap() = None;
                     return;
                 }
-                std::thread::sleep(Duration::from_millis(c::READER_RESPAWN_BACKOFF_MS));
+                std::thread::sleep(Duration::from_millis(c::CLIPBOARD_RESPAWN_BACKOFF_MS));
             }
         }
     }
@@ -438,26 +441,26 @@ fn start_reader(shared: &Shared) {
 
 fn schedule_restart(shared: &Shared, id: &str) {
     // Clear the dead handle immediately.
-    *shared.reader_tx.write().unwrap() = None;
+    *shared.clipboard_tx.write().unwrap() = None;
 
     static RESTARTS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     let n = RESTARTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-    if n > c::READER_MAX_RUNTIME_RESTARTS {
+    if n > c::CLIPBOARD_MAX_RUNTIME_RESTARTS {
         log::error!(
             "reader '{id}' died {n} times; disabling. Investigate with `cliphistory doctor`."
         );
-        *shared.reader_id.write().unwrap() = String::new();
+        *shared.clipboard_id.write().unwrap() = String::new();
         return;
     }
     log::info!(
         "restarting reader '{id}' in {}ms",
-        c::READER_RESPAWN_BACKOFF_MS
+        c::CLIPBOARD_RESPAWN_BACKOFF_MS
     );
     let tx = shared.app_tx.clone();
     std::thread::Builder::new()
         .name("restart-timer".into())
         .spawn(move || {
-            std::thread::sleep(Duration::from_millis(c::READER_RESPAWN_BACKOFF_MS));
+            std::thread::sleep(Duration::from_millis(c::CLIPBOARD_RESPAWN_BACKOFF_MS));
             let _ = tx.send(AppEvent::RestartReader);
         })
         .ok();
@@ -574,7 +577,7 @@ fn status(st: &Shared) -> IpcResponse {
         pid: std::process::id(),
         started_at: st.started_at,
         session: st.session.to_string(),
-        reader: st.reader_id.read().unwrap().clone(),
+        reader: st.clipboard_id.read().unwrap().clone(),
         frontend: st.frontend_id.read().unwrap().clone(),
         entry_count: st.storage.count().unwrap_or(-1),
         db_path: st.storage.db_path().display().to_string(),
@@ -595,11 +598,11 @@ fn copy_entry(st: &Shared, id: i64) -> IpcResponse {
 }
 
 fn send_to_clipboard(st: &Shared, content: &cliphistory_proto::Content) {
-    let guard = st.reader_tx.read().unwrap();
+    let guard = st.clipboard_tx.read().unwrap();
     match guard.as_ref() {
         Some(tx) => {
             if tx
-                .send(HostToReader::SetClipboard {
+                .send(HostToClipboard::SetClipboard {
                     content: content.clone(),
                 })
                 .is_err()
@@ -631,7 +634,10 @@ fn do_show(st: &Shared) -> IpcResponse {
 
     let response = crate::plugins::run_frontend(&module, &items, &st.cfg.frontend.extra_args);
     match response {
-        Ok(cliphistory_proto::ShowResponse::Selected { id }) => copy_entry(st, id),
+        Ok(cliphistory_proto::ShowResponse::Selected { id }) => {
+            log::info!("show: entry {id} selected");
+            copy_entry(st, id)
+        }
         Ok(cliphistory_proto::ShowResponse::Delete { id }) => match st.storage.delete(id) {
             Ok(true) => IpcResponse::ok(format!("deleted entry {id}")),
             Ok(false) => IpcResponse::err(format!("no entry {id}")),
@@ -668,7 +674,7 @@ fn list_modules(st: &Shared) -> Result<Vec<ModuleInfo>> {
             version: if m.version.is_empty() {
                 "local".into()
             } else {
-                m.version
+                m.version.trim_start_matches('v').to_string()
             },
             capabilities: m.manifest.capabilities,
             requires: m.manifest.requires,
@@ -694,7 +700,7 @@ fn doctor_text(st: &Shared) -> String {
     ));
     lines.push(format!(
         "active:     reader={} frontend={}",
-        st.reader_id.read().unwrap(),
+        st.clipboard_id.read().unwrap(),
         st.frontend_id.read().unwrap()
     ));
     match st.storage.count() {
@@ -708,8 +714,15 @@ fn doctor_text(st: &Shared) -> String {
         lines.push("modules:".into());
         for m in items {
             lines.push(format!(
-                "  {:<18} v{} [{:?}] {}",
-                m.id, m.version, m.kind, m.description
+                "  {:<20} {} [{:?}] {}",
+                m.id,
+                if m.version.is_empty() {
+                    "local".into()
+                } else {
+                    m.version
+                },
+                m.kind,
+                m.description
             ));
         }
     }
@@ -718,8 +731,8 @@ fn doctor_text(st: &Shared) -> String {
 
 fn shutdown(st: &Shared, socket_path: &std::path::Path) {
     log::info!("shutting down");
-    if let Some(tx) = st.reader_tx.read().unwrap().as_ref() {
-        tx.send(HostToReader::Stop).ok();
+    if let Some(tx) = st.clipboard_tx.read().unwrap().as_ref() {
+        tx.send(HostToClipboard::Stop).ok();
     }
     let _ = std::fs::remove_file(socket_path);
 }

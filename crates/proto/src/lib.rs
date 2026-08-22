@@ -19,7 +19,7 @@ pub const PROTOCOL_VERSION: u32 = 1;
 // Module kinds / capabilities
 // ---------------------------------------------------------------------------
 
-pub const KIND_READER: &str = "reader";
+pub const KIND_CLIPBOARD: &str = "clipboard";
 pub const KIND_FRONTEND: &str = "frontend";
 
 pub const CAP_READ: &str = "read";
@@ -164,12 +164,12 @@ pub struct HistoryItem {
 /// Frames sent by a reader module to the core on stdout.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum ReaderToHost {
+pub enum ClipboardToHost {
     /// First frame after startup; confirms protocol compatibility.
     Ready { protocol_version: u32 },
     /// Clipboard changed.
     Event { content: Content },
-    /// Reply to [`HostToReader::Ping`].
+    /// Reply to [`HostToClipboard::Ping`].
     Pong,
     /// Non-fatal error report.
     Error { message: String },
@@ -178,7 +178,7 @@ pub enum ReaderToHost {
 /// Frames sent by the core to a reader module on stdin.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum HostToReader {
+pub enum HostToClipboard {
     Ping,
     Stop,
     /// Ask the reader to take ownership of the clipboard with this payload.
@@ -214,14 +214,14 @@ pub enum ShowResponse {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ModuleKind {
-    Reader,
+    Clipboard,
     Frontend,
 }
 
 impl ModuleKind {
     pub fn as_str(&self) -> &'static str {
         match self {
-            ModuleKind::Reader => KIND_READER,
+            ModuleKind::Clipboard => KIND_CLIPBOARD,
             ModuleKind::Frontend => KIND_FRONTEND,
         }
     }
@@ -230,7 +230,7 @@ impl ModuleKind {
 /// Self-description printed by every module binary via `--manifest`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModuleManifest {
-    /// Stable identifier, e.g. `reader-wayland`, `frontend-rofi`.
+    /// Stable identifier, e.g. `clipboard-wayland`, `frontend-rofi`.
     pub id: String,
     pub kind: ModuleKind,
     pub version: String,
@@ -293,20 +293,20 @@ mod tests {
     #[test]
     fn reader_envelopes_roundtrip() {
         let frames = [
-            ReaderToHost::Ready {
+            ClipboardToHost::Ready {
                 protocol_version: PROTOCOL_VERSION,
             },
-            ReaderToHost::Event {
+            ClipboardToHost::Event {
                 content: Content::Text { text: "x".into() },
             },
-            ReaderToHost::Pong,
-            ReaderToHost::Error {
+            ClipboardToHost::Pong,
+            ClipboardToHost::Error {
                 message: "boom".into(),
             },
         ];
         for f in frames {
             let line = serde_json::to_string(&f).unwrap();
-            assert_eq!(serde_json::from_str::<ReaderToHost>(&line).unwrap(), f);
+            assert_eq!(serde_json::from_str::<ClipboardToHost>(&line).unwrap(), f);
         }
     }
 
@@ -336,8 +336,8 @@ mod tests {
     #[test]
     fn manifest_missing_tools() {
         let m = ModuleManifest {
-            id: "reader-x11".into(),
-            kind: ModuleKind::Reader,
+            id: "clipboard-x11".into(),
+            kind: ModuleKind::Clipboard,
             version: "0.1.0".into(),
             protocol_version: PROTOCOL_VERSION,
             capabilities: vec![CAP_READ.into(), CAP_WRITE.into()],

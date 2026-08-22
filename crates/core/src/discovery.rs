@@ -62,10 +62,10 @@ impl fmt::Display for SessionType {
 
 impl SessionType {
     /// Reader module ids to try for this kind of session, best first.
-    pub fn reader_candidates(self) -> &'static [&'static str] {
+    pub fn clipboard_candidates(self) -> &'static [&'static str] {
         match self {
-            SessionType::Wayland => c::READER_CANDIDATES_WAYLAND,
-            SessionType::X11 => c::READER_CANDIDATES_X11,
+            SessionType::Wayland => c::CLIPBOARD_CANDIDATES_WAYLAND,
+            SessionType::X11 => c::CLIPBOARD_CANDIDATES_X11,
             // A TTY can host either once a compositor appears; let tool
             // probing decide instead of hard-coding a preference.
             SessionType::Tty => &[],
@@ -313,12 +313,12 @@ pub fn discover(cfg: &Config, installed: &[InstalledInfo]) -> Result<DiscoveryRe
         }
     };
 
-    let reader_cands = session.reader_candidates().to_vec();
+    let reader_cands = session.clipboard_candidates().to_vec();
     let readers = rank_candidates(
         &reader_cands,
         &relevant,
-        cfg.discovery.preferred_reader.as_deref(),
-        ModuleKind::Reader,
+        cfg.discovery.preferred_clipboard.as_deref(),
+        ModuleKind::Clipboard,
     );
     let frontends = rank_candidates(
         c::FRONTEND_CANDIDATES,
@@ -397,42 +397,42 @@ mod tests {
     #[test]
     fn ranking_prefers_config_then_requirements_then_priority() {
         let wl_reader = InstalledInfo {
-            manifest: manifest("reader-wayland", ModuleKind::Reader, &[]),
+            manifest: manifest("clipboard-wayland", ModuleKind::Clipboard, &[]),
             requirements_met: true,
         };
         let x11_missing = InstalledInfo {
-            manifest: manifest("reader-x11", ModuleKind::Reader, &["xclip"]),
+            manifest: manifest("clipboard-x11", ModuleKind::Clipboard, &["xclip"]),
             requirements_met: false,
         };
         let installed = vec![x11_missing, wl_reader];
 
         // No preference: requirement-satisfied wayland wins over broken x11.
         let ranked = rank_candidates(
-            c::READER_CANDIDATES_X11
+            c::CLIPBOARD_CANDIDATES_X11
                 .iter()
-                .chain(c::READER_CANDIDATES_WAYLAND)
+                .chain(c::CLIPBOARD_CANDIDATES_WAYLAND)
                 .copied()
                 .collect::<Vec<_>>()
                 .as_slice(),
             &installed,
             None,
-            ModuleKind::Reader,
+            ModuleKind::Clipboard,
         );
-        assert_eq!(ranked.first().unwrap(), "reader-wayland");
+        assert_eq!(ranked.first().unwrap(), "clipboard-wayland");
 
         // Explicit preference wins even when another candidate is healthy.
         let ranked = rank_candidates(
-            c::READER_CANDIDATES_X11
+            c::CLIPBOARD_CANDIDATES_X11
                 .iter()
-                .chain(c::READER_CANDIDATES_WAYLAND)
+                .chain(c::CLIPBOARD_CANDIDATES_WAYLAND)
                 .copied()
                 .collect::<Vec<_>>()
                 .as_slice(),
             &installed,
-            Some("reader-x11"),
-            ModuleKind::Reader,
+            Some("clipboard-x11"),
+            ModuleKind::Clipboard,
         );
-        assert_eq!(ranked.first().unwrap(), "reader-x11");
+        assert_eq!(ranked.first().unwrap(), "clipboard-x11");
     }
 
     #[test]

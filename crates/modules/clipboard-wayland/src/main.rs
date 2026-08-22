@@ -5,23 +5,23 @@
 //! the daemon's write-back requests.
 
 use anyhow::{Context, Result};
+use cliphistory_clipboard_common::POLL_INTERVAL_MS;
 use cliphistory_proto::{
-    Content, HostToReader, ModuleKind, ModuleManifest, ReaderToHost, CAP_READ, CAP_WRITE,
+    ClipboardToHost, Content, HostToClipboard, ModuleKind, ModuleManifest, CAP_READ, CAP_WRITE,
     PROTOCOL_VERSION,
 };
-use cliphistory_reader_common::POLL_INTERVAL_MS;
 use sha2::{Digest, Sha256};
 use std::io::{BufReader, Read};
 use std::sync::mpsc;
 use std::time::Duration;
 use wl_clipboard_rs::{copy as wlc, paste as wlp};
 
-const MODULE_ID: &str = "reader-wayland";
+const MODULE_ID: &str = "clipboard-wayland";
 
 fn manifest() -> ModuleManifest {
     ModuleManifest {
         id: MODULE_ID.into(),
-        kind: ModuleKind::Reader,
+        kind: ModuleKind::Clipboard,
         version: env!("CARGO_PKG_VERSION").into(),
         protocol_version: PROTOCOL_VERSION,
         capabilities: vec![CAP_READ.into(), CAP_WRITE.into()],
@@ -31,13 +31,13 @@ fn manifest() -> ModuleManifest {
 }
 
 enum Incoming {
-    Control(HostToReader),
+    Control(HostToClipboard),
 }
 
 fn main() -> std::process::ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.iter().any(|a| a == "--manifest") {
-        return match cliphistory_reader_common::print_manifest(&manifest()) {
+        return match cliphistory_clipboard_common::print_manifest(&manifest()) {
             Ok(()) => std::process::ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("{e:#}");
@@ -49,7 +49,7 @@ fn main() -> std::process::ExitCode {
     match run() {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(e) => {
-            let _ = cliphistory_reader_common::emit(&ReaderToHost::Error {
+            let _ = cliphistory_clipboard_common::emit(&ClipboardToHost::Error {
                 message: format!("{e:#}"),
             });
             eprintln!("error: {e:#}");
@@ -66,7 +66,7 @@ fn run() -> Result<()> {
         .name("stdin".into())
         .spawn(move || {
             let mut reader = BufReader::new(std::io::stdin().lock());
-            while let Some(frame) = cliphistory_reader_common::next_host_frame(&mut reader) {
+            while let Some(frame) = cliphistory_clipboard_common::next_host_frame(&mut reader) {
                 if tx.send(Incoming::Control(frame)).is_err() {
                     break;
                 }
@@ -79,17 +79,17 @@ fn run() -> Result<()> {
         return Err(anyhow::anyhow!("wayland clipboard unavailable: {e}"));
     }
 
-    cliphistory_reader_common::emit(&ReaderToHost::Ready {
+    cliphistory_clipboard_common::emit(&ClipboardToHost::Ready {
         protocol_version: PROTOCOL_VERSION,
     })?;
     let mut last_hash = String::new();
 
     loop {
         match rx.recv_timeout(Duration::from_millis(POLL_INTERVAL_MS)) {
-            Ok(Incoming::Control(HostToReader::Ping)) => {
-                cliphistory_reader_common::emit(&ReaderToHost::Pong)?;
+            Ok(Incoming::Control(HostToClipboard::Ping)) => {
+                cliphistory_clipboard_common::emit(&ClipboardToHost::Pong)?;
             }
-            Ok(Incoming::Control(HostToReader::SetClipboard { content })) => {
+            Ok(Incoming::Control(HostToClipboard::SetClipboard { content })) => {
                 // Detached thread: serving the selection lasts until another
                 // owner appears; the event loop must keep running.
                 std::thread::spawn(move || {
@@ -98,7 +98,7 @@ fn run() -> Result<()> {
                     }
                 });
             }
-            Ok(Incoming::Control(HostToReader::Stop))
+            Ok(Incoming::Control(HostToClipboard::Stop))
             | Err(mpsc::RecvTimeoutError::Disconnected) => {
                 return Ok(());
             }
@@ -107,7 +107,7 @@ fn run() -> Result<()> {
                     let hash = content_hash(&content.bytes());
                     if hash != last_hash {
                         last_hash = hash;
-                        cliphistory_reader_common::emit(&ReaderToHost::Event { content })?;
+                        cliphistory_clipboard_common::emit(&ClipboardToHost::Event { content })?;
                     }
                 }
                 Ok(None) => {}
@@ -118,7 +118,7 @@ fn run() -> Result<()> {
 }
 
 fn log_frame_error(msg: &str) {
-    let _ = cliphistory_reader_common::emit(&ReaderToHost::Error {
+    let _ = cliphistory_clipboard_common::emit(&ClipboardToHost::Error {
         message: msg.to_string(),
     });
 }

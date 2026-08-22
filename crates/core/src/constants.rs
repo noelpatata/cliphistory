@@ -62,8 +62,8 @@ pub const CHANNEL_STABLE: &str = "stable";
 // Discovery candidate priorities (first match wins, config can override)
 // ---------------------------------------------------------------------------
 
-pub const READER_CANDIDATES_WAYLAND: &[&str] = &["reader-wayland"];
-pub const READER_CANDIDATES_X11: &[&str] = &["reader-x11"];
+pub const CLIPBOARD_CANDIDATES_WAYLAND: &[&str] = &["clipboard-wayland"];
+pub const CLIPBOARD_CANDIDATES_X11: &[&str] = &["clipboard-x11"];
 pub const FRONTEND_CANDIDATES: &[&str] = &["frontend-rofi", "frontend-wofi", "frontend-dmenu"];
 
 // ---------------------------------------------------------------------------
@@ -72,10 +72,10 @@ pub const FRONTEND_CANDIDATES: &[&str] = &["frontend-rofi", "frontend-wofi", "fr
 
 /// Delay before respawning a crashed reader module.
 /// (Reader-internal sampling intervals live with the modules themselves.)
-pub const READER_RESPAWN_BACKOFF_MS: u64 = 2_000;
+pub const CLIPBOARD_RESPAWN_BACKOFF_MS: u64 = 2_000;
 /// Give up on a reader that cannot be spawned / keeps dying.
-pub const READER_MAX_SPAWN_ATTEMPTS: u32 = 3;
-pub const READER_MAX_RUNTIME_RESTARTS: u32 = 5;
+pub const CLIPBOARD_MAX_SPAWN_ATTEMPTS: u32 = 3;
+pub const CLIPBOARD_MAX_RUNTIME_RESTARTS: u32 = 5;
 
 // ---------------------------------------------------------------------------
 // Environment variables consulted during discovery
@@ -106,7 +106,7 @@ mod tests {
     fn sane_defaults() {
         assert!(DEFAULT_MAX_ENTRIES > 0);
         assert!(DEFAULT_MAX_ITEM_SIZE_BYTES > 1024);
-        assert!(!READER_CANDIDATES_WAYLAND.is_empty());
+        assert!(!CLIPBOARD_CANDIDATES_WAYLAND.is_empty());
         assert!(!FRONTEND_CANDIDATES.is_empty());
     }
 }
