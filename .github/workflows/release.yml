@@ -56,7 +56,8 @@ jobs:
           mkdir -p "$out"
           cd "target/${{ matrix.target }}/release"
           for bin in cliphistory cliphistory-reader-* cliphistory-frontend-*; do
-            [ -f "$bin" ] && cp "$bin" "../../../$out/"
+            # -f: exists; -x: executables only (skips rustc's *.d dep-info files)
+            [ -f "$bin" ] && [ -x "$bin" ] && cp "$bin" "../../../$out/"
           done
           cd -
           ls -la "$out"
@@ -104,7 +105,8 @@ jobs:
         run: |
           mkdir -p meta
           for bin in target/release/cliphistory-reader-* target/release/cliphistory-frontend-*; do
-            [ -f "$bin" ] || continue
+            # executables only — skip *.d dep-info files rustc leaves behind
+            [ -f "$bin" ] && [ -x "$bin" ] || continue
             base="$(basename "$bin")"
             "$bin" --manifest > "meta/${base}.json"
             cat "meta/${base}.json"
