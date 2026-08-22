@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/proto",
+    "crates/image-utils",
     "crates/core",
     "crates/modules/clipboard-common",
     "crates/modules/clipboard-wayland",
@@ -13,7 +14,7 @@ members = [
 ]
 
 [workspace.package]
-version = "1.0.2"
+version = "1.0.3"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/noelpatata/cliphistory"
@@ -21,6 +22,7 @@ authors = ["cliphistory contributors"]
 
 [workspace.dependencies]
 cliphistory-proto = { path = "crates/proto" }
+cliphistory-image-utils = { path = "crates/image-utils" }
 cliphistory-clipboard-common = { path = "crates/modules/clipboard-common" }
 cliphistory-frontend-common = { path = "crates/modules/frontend-common" }
 serde = { version = "1", features = ["derive"] }

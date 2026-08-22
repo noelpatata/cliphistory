@@ -6,7 +6,13 @@ use cliphistory_proto::{ModuleKind, ModuleManifest, PROTOCOL_VERSION};
 
 const MODULE_ID: &str = "frontend-wofi";
 const MENU_BIN: &str = "wofi";
-const FIXED_ARGS: &[&str] = &["--dmenu", "--insensitive", "--prompt", "cliphistory"];
+const FIXED_ARGS: &[&str] = &[
+    "--dmenu",
+    "--allow-images",
+    "--insensitive",
+    "--prompt",
+    "cliphistory",
+];
 
 fn manifest() -> ModuleManifest {
     ModuleManifest {
@@ -16,6 +22,7 @@ fn manifest() -> ModuleManifest {
         protocol_version: PROTOCOL_VERSION,
         capabilities: vec![],
         requires: vec![MENU_BIN.into()],
+        features: vec![cliphistory_proto::FEATURE_IMAGES.to_string()],
         description: "Renders history in wofi --dmenu".into(),
     }
 }
@@ -42,7 +49,7 @@ fn main() -> std::process::ExitCode {
 }
 
 fn run_module(passthrough: &[String]) -> Result<std::process::ExitCode> {
-    let resp = fc::run_menu(MENU_BIN, FIXED_ARGS, passthrough)?;
+    let resp = fc::run_menu(MENU_BIN, FIXED_ARGS, passthrough, true)?;
     println!("{}", serde_json::to_string(&resp)?);
     Ok(std::process::ExitCode::SUCCESS)
 }

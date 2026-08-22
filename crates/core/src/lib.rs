@@ -7,5 +7,6 @@ pub mod constants;
 pub mod discovery;
 pub mod engine;
 pub mod ipc;
+pub mod paste;
 pub mod plugins;
 pub mod storage;

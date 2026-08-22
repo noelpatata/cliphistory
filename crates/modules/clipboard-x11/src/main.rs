@@ -28,6 +28,7 @@ fn manifest() -> ModuleManifest {
         version: env!("CARGO_PKG_VERSION").into(),
         protocol_version: PROTOCOL_VERSION,
         capabilities: vec![CAP_READ.into(), CAP_WRITE.into()],
+        features: vec![],
         requires: vec![TOOL.into()],
         description: "Polls the X11 CLIPBOARD selection via xclip".into(),
     }
@@ -150,23 +151,33 @@ fn which_xclip() -> Option<std::path::PathBuf> {
 }
 
 fn read_clipboard() -> Result<Option<Content>> {
-    // Empty clipboard: xclip exits non-zero with no output.
-    let text = run_xclip_output(&["-o", "-selection", "clipboard"])?;
-    if !text.is_empty() {
-        return Ok(Some(Content::Text {
-            text: String::from_utf8_lossy(&text).into_owned(),
-        }));
-    }
+    // Ask TARGETS first: browsers offer text/html for images, so flavor
+    // order — not "text first" — decides what we capture.
+    let targets = String::from_utf8_lossy(
+        &run_xclip_output(&["-o", "-selection", "clipboard", "-t", "TARGETS"]).unwrap_or_default(),
+    )
+    .to_lowercase();
 
-    let png = run_xclip_output(&["-o", "-selection", "clipboard", "-t", IMAGE_MIME])?;
-    if png.is_empty() {
+    if targets.lines().any(|t| t.trim() == IMAGE_MIME) {
+        let png = run_xclip_output(&["-o", "-selection", "clipboard", "-t", IMAGE_MIME])?;
+        if !png.is_empty() {
+            let dims = cliphistory_image_utils::dimensions(&png);
+            return Ok(Some(Content::Image {
+                mime: IMAGE_MIME.into(),
+                data: png,
+                width: dims.map(|d| d.0),
+                height: dims.map(|d| d.1),
+            }));
+        }
         return Ok(None);
     }
-    Ok(Some(Content::Image {
-        mime: IMAGE_MIME.into(),
-        data: png,
-        width: None,
-        height: None,
+
+    let text = run_xclip_output(&["-o", "-selection", "clipboard"])?;
+    if text.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(Content::Text {
+        text: String::from_utf8_lossy(&text).into_owned(),
     }))
 }
 

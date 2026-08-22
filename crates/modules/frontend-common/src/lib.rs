@@ -17,7 +17,15 @@ pub fn print_manifest(manifest: &ModuleManifest) -> Result<()> {
 }
 
 /// Run the menu binary and translate its answer into a [`ShowResponse`].
-pub fn run_menu(bin: &str, fixed_args: &[&str], passthrough: &[String]) -> Result<ShowResponse> {
+///
+/// `render_images`: emit wofi-style `img:` escape segments for entries that
+/// carry a thumbnail (only pass `true` for menus that support it).
+pub fn run_menu(
+    bin: &str,
+    fixed_args: &[&str],
+    passthrough: &[String],
+    render_images: bool,
+) -> Result<ShowResponse> {
     let request = read_show_request()?;
     if request.entries.is_empty() {
         return Ok(ShowResponse::Dismissed);
@@ -35,7 +43,7 @@ pub fn run_menu(bin: &str, fixed_args: &[&str], passthrough: &[String]) -> Resul
     {
         use std::io::Write as _;
         let mut stdin = child.stdin.take().expect("frontend stdin");
-        for line in render_lines(&request.entries) {
+        for line in render_lines(&request.entries, render_images) {
             writeln!(stdin, "{line}")?;
         }
         stdin.flush()?;
@@ -68,9 +76,11 @@ fn read_show_request() -> Result<ShowRequest> {
     serde_json::from_slice(&buf).context("parsing show request")
 }
 
-/// `"<id>\t<preview>"` lines; control characters flattened so menus show one
-/// line per entry.
-fn render_lines(entries: &[HistoryItem]) -> Vec<String> {
+/// `"<id>\t<label>"` lines; control characters flattened so menus show one
+/// line per entry. With `images` on, thumbnails are emitted as wofi image
+/// escapes (`img:<path> text:<label>`); selection output still starts with
+/// the id prefix, so parsing is unaffected.
+fn render_lines(entries: &[HistoryItem], images: bool) -> Vec<String> {
     entries
         .iter()
         .map(|e| {
@@ -79,7 +89,12 @@ fn render_lines(entries: &[HistoryItem]) -> Vec<String> {
                 .replace('\n', "\\n")
                 .replace('\r', "")
                 .replace('\t', "  ");
-            format!("{}\t{flat}", e.id)
+            let label = match (images, &e.thumbnail) {
+                (true, Some(path)) => format!("img:{path} text:{flat}"),
+                (true, None) => format!("text:{flat}"),
+                (false, _) => flat,
+            };
+            format!("{}\t{label}", e.id)
         })
         .collect()
 }
@@ -115,10 +130,45 @@ mod tests {
             created_at: 0,
             use_count: 0,
             pinned: false,
+            thumbnail: None,
         }];
         assert_eq!(
-            render_lines(&items),
+            render_lines(&items, false),
             vec!["7\ttwo\\nlines  here".to_string()]
+        );
+    }
+
+    #[test]
+    fn image_entries_emit_wofi_escapes_when_enabled() {
+        let mk = |id: i64, preview: &str, thumb: Option<&str>| HistoryItem {
+            id,
+            kind: if thumb.is_some() { "image" } else { "text" }.into(),
+            mime: "application/octet-stream".into(),
+            preview: preview.into(),
+            size_bytes: 1,
+            created_at: 0,
+            use_count: 0,
+            pinned: false,
+            thumbnail: thumb.map(str::to_string),
+        };
+        let items = vec![
+            mk(3, "[image image/png 12.0KB]", Some("/thumbs/abc.png")),
+            mk(4, "plain", None),
+        ];
+        assert_eq!(
+            render_lines(&items, true),
+            vec![
+                "3\timg:/thumbs/abc.png text:[image image/png 12.0KB]".to_string(),
+                "4\ttext:plain".to_string(),
+            ]
+        );
+        // Without the images feature, output stays plain regardless.
+        assert_eq!(
+            render_lines(&items, false),
+            vec![
+                "3\t[image image/png 12.0KB]".to_string(),
+                "4\tplain".to_string(),
+            ]
         );
     }
 

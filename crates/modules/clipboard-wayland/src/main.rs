@@ -25,6 +25,7 @@ fn manifest() -> ModuleManifest {
         version: env!("CARGO_PKG_VERSION").into(),
         protocol_version: PROTOCOL_VERSION,
         capabilities: vec![CAP_READ.into(), CAP_WRITE.into()],
+        features: vec![],
         requires: vec![],
         description: "Watches and owns the Wayland clipboard (wl-clipboard-rs)".into(),
     }
@@ -127,49 +128,65 @@ fn log_frame_error(msg: &str) {
 // Reading
 // ---------------------------------------------------------------------------
 
-/// Read the regular clipboard, preferring text over images.
-fn read_clipboard() -> Result<Option<Content>> {
-    // Text first.
-    match wlp::get_contents(
-        wlp::ClipboardType::Regular,
-        wlp::Seat::Unspecified,
-        wlp::MimeType::Text,
-    ) {
-        Ok((mut pipe, _mime)) => {
-            let mut buf = Vec::new();
-            pipe.read_to_end(&mut buf)?;
-            if buf.is_empty() {
-                return Ok(None);
-            }
-            return Ok(Some(Content::Text {
-                text: String::from_utf8_lossy(&buf).into_owned(),
-            }));
-        }
-        Err(wlp::Error::NoSeats | wlp::Error::ClipboardEmpty | wlp::Error::NoMimeType) => {}
-        Err(e) => return Err(anyhow::anyhow!("text paste failed: {e}")),
-    }
+/// Plain-text MIME types we accept (lowercased). `text/html` is
+/// deliberately absent: browsers offer it alongside everything else, and
+/// capturing it turns copied images into `<img src=...>` markup soup.
+const PLAIN_TEXT_MIMES: &[&str] = &[
+    "text/plain;charset=utf-8",
+    "text/plain",
+    "utf8_string",
+    "string",
+    "text",
+];
 
-    // Then PNG images (the lingua franca of screenshots).
-    match wlp::get_contents(
+/// Read the regular clipboard, choosing the best offered flavor:
+/// `image/png` beats plain text; anything else is ignored.
+fn read_clipboard() -> Result<Option<Content>> {
+    let offered_set = wlp::get_mime_types(wlp::ClipboardType::Regular, wlp::Seat::Unspecified)?;
+    let mut offered: Vec<String> = offered_set.into_iter().collect();
+    offered.sort();
+    let has = |want: &str| offered.iter().any(|o| o.eq_ignore_ascii_case(want));
+
+    if has("image/png") {
+        return read_specific("image/png").map(Some);
+    }
+    if PLAIN_TEXT_MIMES.iter().any(|m| has(m)) {
+        return read_specific("text/plain;charset=utf-8").map(Some);
+    }
+    Ok(None)
+}
+
+fn read_specific(mime: &str) -> Result<Content> {
+    let result = wlp::get_contents(
         wlp::ClipboardType::Regular,
         wlp::Seat::Unspecified,
-        wlp::MimeType::Specific("image/png"),
-    ) {
-        Ok((mut pipe, mime)) => {
+        wlp::MimeType::Specific(mime),
+    );
+    match result {
+        Ok((mut pipe, _actual_mime)) => {
             let mut buf = Vec::new();
             pipe.read_to_end(&mut buf)?;
             if buf.is_empty() {
-                return Ok(None);
+                anyhow::bail!("empty payload for {mime}");
             }
-            Ok(Some(Content::Image {
-                mime,
-                data: buf,
-                width: None,
-                height: None,
-            }))
+            if mime.starts_with("text/") {
+                Ok(Content::Text {
+                    text: String::from_utf8_lossy(&buf).into_owned(),
+                })
+            } else {
+                let dims = cliphistory_image_utils::dimensions(&buf);
+                Ok(Content::Image {
+                    mime: mime.to_string(),
+                    data: buf,
+                    width: dims.map(|d| d.0),
+                    height: dims.map(|d| d.1),
+                })
+            }
         }
-        Err(wlp::Error::NoSeats | wlp::Error::ClipboardEmpty | wlp::Error::NoMimeType) => Ok(None),
-        Err(e) => Err(anyhow::anyhow!("image paste failed: {e}")),
+        Err(wlp::Error::NoSeats | wlp::Error::ClipboardEmpty | wlp::Error::NoMimeType) => {
+            Err(anyhow::anyhow!("flavor vanished: {mime}"))
+        }
+        Err(e) => Err(anyhow::anyhow!("paste of {mime} failed: {e}")),
     }
 }
 

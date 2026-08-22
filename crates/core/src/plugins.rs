@@ -45,6 +45,8 @@ pub struct RemoteModule {
     #[serde(default)]
     pub requires: Vec<String>,
     #[serde(default)]
+    pub features: Vec<String>,
+    #[serde(default)]
     pub description: String,
     pub file: AssetRef,
 }
@@ -328,6 +330,7 @@ impl ModuleManager {
             protocol_version: PROTOCOL_VERSION,
             capabilities: remote.capabilities.clone(),
             requires: remote.requires.clone(),
+            features: remote.features.clone(),
             description: remote.description.clone(),
         };
         std::fs::write(
