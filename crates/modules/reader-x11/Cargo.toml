@@ -1,0 +1,22 @@
+[package]
+name = "cliphistory-reader-x11"
+description = "cliphistory clipboard reader for X11 sessions (xclip)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "cliphistory-reader-x11"
+path = "src/main.rs"
+
+[dependencies]
+cliphistory-proto = { workspace = true }
+cliphistory-reader-common = { workspace = true }
+anyhow = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+
+[package.metadata.notes]
+polling = "X11 offers no clipboard-change events without a toolkit; this module polls xclip"

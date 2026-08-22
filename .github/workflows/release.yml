@@ -1,0 +1,207 @@
+name: Release
+
+# Branch model: dev <- feature branches; release/vX.Y stabilisation branches
+# cut from dev; MERGING release/vX.Y INTO main TRIGGERS THE RELEASE below.
+#
+# The workflow:
+#   1. reads the version from the root Cargo.toml,
+#   2. builds the core binary and every module for all supported targets,
+#   3. extracts each module's self-description (`--manifest`) from a native
+#      build so the published manifest carries true requirements,
+#   4. generates a manifest.json (paths + sha256 + protocol version),
+#   5. publishes a GitHub release tagged v<version> with all artifacts so
+#      the clipwell downloader can fetch modules at runtime.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: build ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-unknown-linux-gnu
+          - x86_64-unknown-linux-musl
+          - aarch64-unknown-linux-gnu
+          - aarch64-unknown-linux-musl
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cross-compilation tooling
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build workspace
+        run: cross build --release --target ${{ matrix.target }} --workspace
+
+      - name: Stage artifacts
+        run: |
+          out="dist/${{ matrix.target }}"
+          mkdir -p "$out"
+          cd "target/${{ matrix.target }}/release"
+          for bin in clipwell clipwell-reader-* clipwell-frontend-*; do
+            [ -f "$bin" ] && cp "$bin" "../../../$out/"
+          done
+          cd -
+          ls -la "$out"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.target }}
+          path: dist/${{ matrix.target }}
+          retention-days: 3
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Determine version and tag
+        id: ver
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="$(grep -m1 '^version' Cargo.toml | cut -d '"' -f2)"
+          TAG="v${VERSION}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "exists=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=no" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Native build used solely to ask every module for its own metadata.
+      - name: Build host binaries for metadata extraction
+        if: steps.ver.outputs.exists == 'no'
+        run: cargo build --release --workspace
+
+      - name: Extract module metadata
+        if: steps.ver.outputs.exists == 'no'
+        run: |
+          mkdir -p meta
+          for bin in target/release/clipwell-reader-* target/release/clipwell-frontend-*; do
+            [ -f "$bin" ] || continue
+            base="$(basename "$bin")"
+            "$bin" --manifest > "meta/${base}.json"
+            cat "meta/${base}.json"
+          done
+
+      - name: Download all artifacts
+        if: steps.ver.outputs.exists == 'no'
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: dist-*
+          merge-multiple: true
+
+      - name: Flatten artifact directories
+        if: steps.ver.outputs.exists == 'no'
+        run: |
+          cd dist
+          for t in */; do
+            target="${t%/}"
+            mv "$target"/* "./${target}__" || true
+            rmdir "$target"
+          done
+          ls -la
+
+      - name: Generate manifest.json
+        if: steps.ver.outputs.exists == 'no'
+        env:
+          TAG: ${{ steps.ver.outputs.tag }}
+        run: |
+          PROTOCOL_VERSION="$(grep -oP 'PROTOCOL_VERSION:\s*u32\s*=\s*\K[0-9]+' crates/proto/src/lib.rs)"
+          export PROTOCOL_VERSION TAG
+          python3 <<'EOF'
+          import glob, hashlib, json, os, sys
+
+          tag = os.environ["TAG"]
+          protocol_version = int(os.environ["PROTOCOL_VERSION"])
+
+          # Truthful per-module metadata from their --manifest output.
+          meta = {}
+          for path in glob.glob("meta/*.json"):
+              with open(path) as f:
+                  m = json.load(f)
+              meta[m["id"]] = {
+                  "kind": m.get("kind", "reader"),
+                  "capabilities": m.get("capabilities", []),
+                  "requires": m.get("requires", []),
+                  "description": m.get("description", ""),
+              }
+
+          def sha256(path):
+              h = hashlib.sha256()
+              with open(path, "rb") as fh:
+                  for chunk in iter(lambda: fh.read(1 << 20), b""):
+                      h.update(chunk)
+              return h.hexdigest()
+
+          targets = {}
+          for name in sorted(os.listdir("dist")):
+              if "__" not in name:
+                  continue
+              triple, binary = name.split("__", 1)
+              entry = targets.setdefault(triple, {"core": None, "modules": []})
+              ref = {"path": name, "sha256": sha256(f"dist/{name}")}
+              if binary == "clipwell":
+                  entry["core"] = ref
+              else:
+                  module_id = binary.removeprefix("clipwell-")
+                  info = meta.get(module_id)
+                  kind = info["kind"] if info else (
+                      "reader" if module_id.startswith("reader-") else "frontend")
+                  entry["modules"].append({
+                      "id": module_id,
+                      "kind": kind,
+                      "capabilities": info["capabilities"] if info else [],
+                      "requires": info["requires"] if info else [],
+                      "description": info["description"] if info else "",
+                      "file": ref,
+                  })
+
+          manifest = {
+              "release": tag,
+              "protocol_version": protocol_version,
+              "targets": {t: v for t, v in sorted(targets.items()) if v["core"]},
+          }
+          with open("dist/manifest.json", "w") as f:
+              json.dump(manifest, f, indent=2)
+          print(json.dumps(manifest, indent=2))
+          EOF
+
+      - name: Publish GitHub release
+        if: steps.ver.outputs.exists == 'no'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.ver.outputs.tag }}
+        run: |
+          gh release create "$TAG" \
+            --title "clipwell ${TAG}" \
+            --notes "Modules are downloaded automatically by the daemon on first start. Manual install: \`clipwell modules install reader-wayland frontend-rofi\`. manifest.json lists every artifact with its sha256 checksum." \
+            --target "$GITHUB_SHA" \
+            dist/*
