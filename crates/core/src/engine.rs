@@ -371,7 +371,9 @@ fn schedule_restart(shared: &Shared, id: &str) {
     static RESTARTS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     let n = RESTARTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
     if n > c::READER_MAX_RUNTIME_RESTARTS {
-        log::error!("reader '{id}' died {n} times; disabling. Investigate with `cliphistory doctor`.");
+        log::error!(
+            "reader '{id}' died {n} times; disabling. Investigate with `cliphistory doctor`."
+        );
         *shared.reader_id.write().unwrap() = String::new();
         return;
     }
