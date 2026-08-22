@@ -1,0 +1,11 @@
+[package]
+name = "cliphistory-image-utils"
+description = "Image dimension probing and thumbnail generation for cliphistory"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+anyhow = { workspace = true }

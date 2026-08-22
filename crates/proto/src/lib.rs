@@ -25,6 +25,10 @@ pub const KIND_FRONTEND: &str = "frontend";
 pub const CAP_READ: &str = "read";
 pub const CAP_WRITE: &str = "write";
 
+/// Optional module features. Frontends may declare `"images"` when they can
+/// render `HistoryItem.thumbnail` entries.
+pub const FEATURE_IMAGES: &str = "images";
+
 /// Maximum number of characters kept in an entry preview.
 pub const PREVIEW_MAX_CHARS: usize = 200;
 
@@ -155,6 +159,9 @@ pub struct HistoryItem {
     pub created_at: u64,
     pub use_count: u64,
     pub pinned: bool,
+    /// Absolute path to a cached downscaled PNG preview (images only).
+    #[serde(default)]
+    pub thumbnail: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -239,6 +246,10 @@ pub struct ModuleManifest {
     pub capabilities: Vec<String>,
     /// External executables this module needs on PATH at runtime.
     pub requires: Vec<String>,
+    /// Optional feature switches, e.g. `["images"]` for frontends that can
+    /// render thumbnails.
+    #[serde(default)]
+    pub features: Vec<String>,
     pub description: String,
 }
 
@@ -342,6 +353,7 @@ mod tests {
             protocol_version: PROTOCOL_VERSION,
             capabilities: vec![CAP_READ.into(), CAP_WRITE.into()],
             requires: vec!["xclip".into()],
+            features: vec![],
             description: String::new(),
         };
         assert_eq!(m.missing_tools(|_| true), Vec::<String>::new());

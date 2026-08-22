@@ -359,6 +359,7 @@ mod tests {
             protocol_version: PROTOCOL_VERSION,
             capabilities: vec!["read".into(), "write".into()],
             requires: requires.iter().map(|s| s.to_string()).collect(),
+            features: vec![],
             description: String::new(),
         }
     }

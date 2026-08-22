@@ -15,6 +15,7 @@ fn manifest() -> ModuleManifest {
         version: env!("CARGO_PKG_VERSION").into(),
         protocol_version: PROTOCOL_VERSION,
         capabilities: vec![],
+        features: vec![],
         requires: vec![MENU_BIN.into()],
         description: "Renders history in rofi -dmenu".into(),
     }
@@ -43,7 +44,7 @@ fn main() -> std::process::ExitCode {
 }
 
 fn run_module(passthrough: &[String]) -> Result<std::process::ExitCode> {
-    let resp = fc::run_menu(MENU_BIN, FIXED_ARGS, passthrough)?;
+    let resp = fc::run_menu(MENU_BIN, FIXED_ARGS, passthrough, false)?;
     println!("{}", serde_json::to_string(&resp)?);
     Ok(std::process::ExitCode::SUCCESS)
 }

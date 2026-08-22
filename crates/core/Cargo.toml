@@ -16,12 +16,14 @@ path = "src/main.rs"
 
 [dependencies]
 cliphistory-proto = { workspace = true }
+cliphistory-image-utils = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
 log = { workspace = true }
 clap = { workspace = true }
 rusqlite = { workspace = true }
+image = { version = "0.25", default-features = false, features = ["png"] }
 sha2 = { workspace = true }
 toml = { workspace = true }
 dirs = { workspace = true }

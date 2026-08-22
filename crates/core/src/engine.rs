@@ -129,10 +129,13 @@ fn run_inner(cfg: Config, socket_path: std::path::PathBuf) -> Result<()> {
     while let Ok(event) = app_rx.recv() {
         match event {
             AppEvent::FromReader(ClipboardToHost::Event { content }) => {
-                match shared
-                    .storage
-                    .insert(&content, shared.cfg.storage.max_item_size)
-                {
+                match shared.storage.insert(
+                    &content,
+                    crate::storage::InsertOpts {
+                        max_item_size: shared.cfg.storage.max_item_size,
+                        thumbnail_size: shared.cfg.storage.thumbnail_size,
+                    },
+                ) {
                     Ok(crate::storage::InsertOutcome::Inserted(id)) => {
                         log::info!("[{id}] stored {}", content.preview());
                         let _ = shared.storage.prune(
@@ -191,6 +194,7 @@ fn remote_candidates(shared: &Shared) -> Option<(Option<String>, Option<String>)
                 protocol_version: PROTOCOL_VERSION,
                 capabilities: m.capabilities.clone(),
                 requires: m.requires.clone(),
+                features: m.features.clone(),
                 description: m.description.clone(),
             },
             requirements_met: m.requires.iter().all(|t| probe_tool(t)),
@@ -594,6 +598,7 @@ fn copy_entry(st: &Shared, id: i64) -> IpcResponse {
     };
     send_to_clipboard(st, &content);
     let _ = st.storage.mark_used(id);
+    crate::paste::schedule_opt(st.cfg.general.paste_command.clone());
     IpcResponse::ok(format!("copied {}", content.preview()))
 }
 

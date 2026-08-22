@@ -53,9 +53,10 @@ cliphistory stop && cliphistory serve     # or: systemctl --user restart cliphis
 
 ## `[general]`
 
-| Key         | Type   | Default | Description |
-|-------------|--------|---------|-------------|
-| `log_level` | string | `"info"` | Daemon log verbosity: `trace`, `debug`, `info`, `warn` or `error`. |
+| Key             | Type   | Default | Description |
+|-----------------|--------|---------|-------------|
+| `log_level`     | string | `"info"` | Daemon log verbosity: `trace`, `debug`, `info`, `warn` or `error`. |
+| `paste_command` | string | *(unset)* | Shell command run ~150 ms after a selection is written to the clipboard, enabling automatic paste into the focused input — e.g. `"wtype -M ctrl -k v -m ctrl"` (`pacman -S wtype`). Unset = copy only. |
 
 The `RUST_LOG` environment variable always wins over this key, e.g.
 `RUST_LOG=debug cliphistory serve`. Client commands stay quiet regardless;
@@ -74,6 +75,7 @@ are exempt from **all** pruning.
 | `max_entries`   | integer | `500`                                | Keep at most this many entries. Oldest unpinned entries are pruned after each insert. |
 | `max_item_size` | integer | `5242880` (5 MiB)                    | Payloads larger than this many bytes are silently skipped (logged at `info`). |
 | `max_age_days`  | integer | `0`                                  | Delete unpinned entries older than N days. `0` disables age-based pruning. |
+| `thumbnail_size`| integer | `256`                                | Longest edge (px) of cached image previews shown in image-capable frontends. `0` disables thumbnails. Previews live in a `thumbs/` directory next to the database and are pruned together with their entries. |
 
 Notes:
 

@@ -58,7 +58,8 @@ fn write_fake_release(dir: &Path) -> Result<()> {
                     kind: ModuleKind::Clipboard,
                     capabilities: vec!["read".into(), "write".into()],
                     requires: vec![],
-                    description: "fake reader".into(),
+                    features: vec![],
+                    description: "fake clipboard module".into(),
                     file: AssetRef {
                         path: "cliphistory-clipboard-fake-x86_64-unknown-linux-gnu".into(),
                         sha256: sha256_file(&bin),

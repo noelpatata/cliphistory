@@ -18,6 +18,7 @@ pub const DATA_SUBDIR: &str = "cliphistory";
 pub const RUNTIME_SUBDIR: &str = "cliphistory";
 pub const CONFIG_FILENAME: &str = "config.toml";
 pub const DB_FILENAME: &str = "history.db";
+pub const THUMBS_DIRNAME: &str = "thumbs";
 pub const SOCKET_FILENAME: &str = "cliphistory.sock";
 pub const MODULES_DIRNAME: &str = "modules";
 pub const RELEASE_MANIFEST_CACHE_FILENAME: &str = "release-manifest.json";
@@ -42,6 +43,18 @@ pub const DEFAULT_MAX_ENTRIES: i64 = 500;
 pub const DEFAULT_MAX_ITEM_SIZE_BYTES: i64 = 5 * 1024 * 1024;
 /// 0 disables age-based pruning.
 pub const DEFAULT_MAX_AGE_DAYS: i64 = 0;
+/// Longest edge of generated image previews; 0 disables thumbnails.
+pub const DEFAULT_THUMBNAIL_SIZE: u32 = 256;
+
+// ---------------------------------------------------------------------------
+// Auto-paste (runs after a selection is written back to the clipboard)
+// ---------------------------------------------------------------------------
+
+/// Grace period so the clipboard module owns the selection before the
+/// target application reads it.
+pub const PASTE_DELAY_MS: u64 = 150;
+/// Example wired for `wtype` (pacman -S wtype).
+pub const PASTE_COMMAND_EXAMPLE: &str = "wtype -M ctrl -k v -m ctrl";
 
 pub const SECS_PER_DAY: u64 = 86_400;
 

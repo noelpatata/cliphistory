@@ -21,12 +21,18 @@ pub struct Config {
 pub struct GeneralConfig {
     /// `trace|debug|info|warn|error`. `RUST_LOG` overrides.
     pub log_level: String,
+    /// Run this shell command after a selection is written to the clipboard,
+    /// enabling automatic paste. Example:
+    ///   "wtype -M ctrl -k v -m ctrl"   (pacman -S wtype)
+    /// Empty/unset disables auto-paste.
+    pub paste_command: Option<String>,
 }
 
 impl Default for GeneralConfig {
     fn default() -> Self {
         Self {
             log_level: "info".into(),
+            paste_command: None,
         }
     }
 }
@@ -42,6 +48,9 @@ pub struct StorageConfig {
     pub max_item_size: i64,
     /// Entries older than this are pruned; 0 disables age pruning.
     pub max_age_days: i64,
+    /// Longest edge of cached image previews, in pixels. 0 disables
+    /// thumbnail generation entirely.
+    pub thumbnail_size: u32,
 }
 
 impl Default for StorageConfig {
@@ -51,6 +60,7 @@ impl Default for StorageConfig {
             max_entries: c::DEFAULT_MAX_ENTRIES,
             max_item_size: c::DEFAULT_MAX_ITEM_SIZE_BYTES,
             max_age_days: c::DEFAULT_MAX_AGE_DAYS,
+            thumbnail_size: c::DEFAULT_THUMBNAIL_SIZE,
         }
     }
 }
@@ -237,12 +247,14 @@ impl Config {
 [general]
 # trace | debug | info | warn | error  (env RUST_LOG overrides)
 log_level = "info"
+# paste_command = "wtype -M ctrl -k v -m ctrl"   # auto-paste after selecting (pacman -S wtype)
 
 [storage]
 # db_path = "~/.local/share/{app}/{db}"
 max_entries = {max_entries}
 max_item_size = {max_item}      # bytes; larger payloads are ignored
 max_age_days = 0                # 0 = keep forever
+thumbnail_size = 256            # px, longest edge of image previews; 0 disables
 
 [discovery]
 # preferred_clipboard = "clipboard-wayland"     # omit for automatic detection
