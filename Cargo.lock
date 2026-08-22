@@ -170,7 +170,7 @@ checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
 name = "cliphistory-core"
-version = "0.1.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -190,7 +190,7 @@ dependencies = [
 
 [[package]]
 name = "cliphistory-frontend-common"
-version = "0.1.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "cliphistory-proto",
@@ -199,7 +199,7 @@ dependencies = [
 
 [[package]]
 name = "cliphistory-frontend-dmenu"
-version = "0.1.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "cliphistory-frontend-common",
@@ -209,7 +209,7 @@ dependencies = [
 
 [[package]]
 name = "cliphistory-frontend-rofi"
-version = "0.1.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "cliphistory-frontend-common",
@@ -219,7 +219,7 @@ dependencies = [
 
 [[package]]
 name = "cliphistory-frontend-wofi"
-version = "0.1.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "cliphistory-frontend-common",
@@ -229,7 +229,7 @@ dependencies = [
 
 [[package]]
 name = "cliphistory-proto"
-version = "0.1.0"
+version = "1.0.1"
 dependencies = [
  "base64",
  "serde",
@@ -238,7 +238,7 @@ dependencies = [
 
 [[package]]
 name = "cliphistory-reader-common"
-version = "0.1.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "cliphistory-proto",
@@ -247,7 +247,7 @@ dependencies = [
 
 [[package]]
 name = "cliphistory-reader-wayland"
-version = "0.1.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "cliphistory-proto",
@@ -260,7 +260,7 @@ dependencies = [
 
 [[package]]
 name = "cliphistory-reader-x11"
-version = "0.1.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "cliphistory-proto",

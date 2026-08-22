@@ -10,12 +10,14 @@
 
 use crate::config::{self, Config};
 use crate::constants as c;
-use crate::discovery::{self, detect_session, probe_requirements, InstalledInfo, RealEnv};
+use crate::discovery::{
+    self, detect_session, probe_requirements, probe_tool, InstalledInfo, RealEnv,
+};
 use crate::ipc::{DaemonStatus, IpcRequest, IpcResponse, ModuleInfo};
 use crate::plugins::{InstalledModule, ModuleManager, ReaderHandle};
 use crate::storage::{unix_now, Storage};
 use anyhow::{bail, Context, Result};
-use cliphistory_proto::{HostToReader, ReaderToHost};
+use cliphistory_proto::{HostToReader, ReaderToHost, PROTOCOL_VERSION};
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -167,6 +169,52 @@ fn run_inner(cfg: Config, socket_path: std::path::PathBuf) -> Result<()> {
 // Module selection / installation
 // ---------------------------------------------------------------------------
 
+/// For a machine with no modules installed yet: fetch the remote release
+/// manifest, synthesise candidate infos from its metadata (requirements
+/// probed against this system) and rank them exactly like installed ones
+/// would be. Returns `(reader, frontend)` picks; `None` when unreachable.
+fn remote_candidates(shared: &Shared) -> Option<(Option<String>, Option<String>)> {
+    let rm = shared.mm.fetch_remote_manifest(None).ok()?;
+    let assets = shared.mm.select_target(&rm).ok()?;
+
+    let pseudo: Vec<discovery::InstalledInfo> = assets
+        .modules
+        .iter()
+        .map(|m| discovery::InstalledInfo {
+            manifest: cliphistory_proto::ModuleManifest {
+                id: m.id.clone(),
+                kind: m.kind,
+                version: rm.release.clone(),
+                protocol_version: PROTOCOL_VERSION,
+                capabilities: m.capabilities.clone(),
+                requires: m.requires.clone(),
+                description: m.description.clone(),
+            },
+            requirements_met: m.requires.iter().all(|t| probe_tool(t)),
+        })
+        .collect();
+
+    let reader = discovery::rank_candidates(
+        shared.session.reader_candidates(),
+        &pseudo,
+        shared.cfg.discovery.preferred_reader.as_deref(),
+        cliphistory_proto::ModuleKind::Reader,
+    )
+    .into_iter()
+    .next();
+
+    let frontend = discovery::rank_candidates(
+        c::FRONTEND_CANDIDATES,
+        &pseudo,
+        shared.cfg.discovery.preferred_frontend.as_deref(),
+        cliphistory_proto::ModuleKind::Frontend,
+    )
+    .into_iter()
+    .next();
+
+    Some((reader, frontend))
+}
+
 fn select_modules(shared: &mut Shared) -> Result<()> {
     let installed = shared.mm.list_installed()?;
     let infos = to_installed_infos(&installed);
@@ -190,14 +238,38 @@ fn select_modules(shared: &mut Shared) -> Result<()> {
         shared.cfg.discovery.preferred_frontend.as_deref(),
     );
 
+    // Fresh machine: nothing installed, so discovery ranked nothing. Decide
+    // what to download using the release manifest's own `requires` metadata
+    // (core stays decoupled from module internals) and fetch only the winners.
+    let mut wanted: Vec<String> = Vec::new();
+    if reader_pick.is_none() && frontend_pick.is_none() {
+        match remote_candidates(shared) {
+            Some((reader, frontend)) => {
+                wanted.extend([reader, frontend].into_iter().flatten());
+            }
+            None => {
+                // Offline or unreachable source: try every known candidate so
+                // a later online run / manual install can still succeed.
+                log::warn!("cannot reach release manifest; queueing all candidates");
+                wanted.extend(
+                    shared
+                        .session
+                        .reader_candidates()
+                        .iter()
+                        .map(|s| s.to_string()),
+                );
+                wanted.extend(c::FRONTEND_CANDIDATES.iter().map(|s| s.to_string()));
+            }
+        }
+    } else {
+        wanted.extend([reader_pick, frontend_pick].into_iter().flatten());
+    }
+
     // Download whatever is missing (skipped in local-dir dev mode).
     let mut missing: Vec<String> = Vec::new();
-    for id in [reader_pick.as_ref(), frontend_pick.as_ref()]
-        .into_iter()
-        .flatten()
-    {
-        if shared.mm.resolve(id).is_none() && !missing.iter().any(|m| m == id) {
-            missing.push(id.clone());
+    for id in wanted {
+        if shared.mm.resolve(&id).is_none() && !missing.iter().any(|m| m == &id) {
+            missing.push(id);
         }
     }
     if !missing.is_empty() && !shared.mm.install_root().exists() {
