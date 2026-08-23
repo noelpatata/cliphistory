@@ -188,7 +188,7 @@ checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
 name = "cliphistory-clipboard-common"
-version = "2.0.2"
+version = "2.0.3"
 dependencies = [
  "anyhow",
  "cliphistory-proto",
@@ -198,7 +198,7 @@ dependencies = [
 
 [[package]]
 name = "cliphistory-clipboard-wayland"
-version = "2.0.2"
+version = "2.0.3"
 dependencies = [
  "anyhow",
  "cliphistory-clipboard-common",
@@ -212,7 +212,7 @@ dependencies = [
 
 [[package]]
 name = "cliphistory-clipboard-x11"
-version = "2.0.2"
+version = "2.0.3"
 dependencies = [
  "anyhow",
  "cliphistory-clipboard-common",
@@ -225,7 +225,7 @@ dependencies = [
 
 [[package]]
 name = "cliphistory-core"
-version = "2.0.2"
+version = "2.0.3"
 dependencies = [
  "anyhow",
  "clap",
@@ -247,7 +247,7 @@ dependencies = [
 
 [[package]]
 name = "cliphistory-frontend-common"
-version = "2.0.2"
+version = "2.0.3"
 dependencies = [
  "anyhow",
  "cliphistory-proto",
@@ -256,7 +256,7 @@ dependencies = [
 
 [[package]]
 name = "cliphistory-frontend-dmenu"
-version = "2.0.2"
+version = "2.0.3"
 dependencies = [
  "anyhow",
  "cliphistory-frontend-common",
@@ -266,7 +266,7 @@ dependencies = [
 
 [[package]]
 name = "cliphistory-frontend-rofi"
-version = "2.0.2"
+version = "2.0.3"
 dependencies = [
  "anyhow",
  "cliphistory-frontend-common",
@@ -276,7 +276,7 @@ dependencies = [
 
 [[package]]
 name = "cliphistory-frontend-wofi"
-version = "2.0.2"
+version = "2.0.3"
 dependencies = [
  "anyhow",
  "cliphistory-frontend-common",
@@ -286,7 +286,7 @@ dependencies = [
 
 [[package]]
 name = "cliphistory-image-utils"
-version = "2.0.2"
+version = "2.0.3"
 dependencies = [
  "anyhow",
  "image",
@@ -294,7 +294,7 @@ dependencies = [
 
 [[package]]
 name = "cliphistory-paster-wayland"
-version = "2.0.2"
+version = "2.0.3"
 dependencies = [
  "anyhow",
  "cliphistory-clipboard-common",
@@ -307,7 +307,7 @@ dependencies = [
 
 [[package]]
 name = "cliphistory-proto"
-version = "2.0.2"
+version = "2.0.3"
 dependencies = [
  "base64",
  "serde",

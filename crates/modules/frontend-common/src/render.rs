@@ -1,38 +1,68 @@
-//! Menu line rendering and selection parsing.
+//! Menu line rendering and selection resolution.
 //!
-//! This module owns the *menu wire format*: how a [`HistoryItem`] becomes a
-//! line a menu program understands, and how the menu's echoed selection
-//! maps back to an id. Callers (frontend modules) never touch escape
-//! sequences or dialect details.
+//! This module owns the *menu wire format*. Callers (frontend modules)
+//! never touch escape sequences or dialect details.
 //!
-//! Two dialects exist:
-//!
-//! * **plain**  — `<id>\t<label>` for menus without image support.
-//! * **images** — wofi-style segments. wofi parses space-separated
-//!   `<mode>:<data>` segments, so every entry is emitted as
-//!   `img:<thumb> text:<id> <label>` (or `text:<id> <label>` when there is
-//!   no preview). The id is always the first token of the `text:` segment,
-//!   which makes parsing trivial and keeps every character printable.
+//! wofi (≤1.5.x) parses space-separated `mode:data` segments where every
+//! segment prefix must itself be a known mode; consequently an image entry
+//! is a SINGLE `img:<path>` segment — a text label cannot coexist with it.
+//! Ids therefore travel through a side-table: the menu echoes the rendered
+//! line back verbatim, and [`SelectionMap`] resolves it to the entry id.
 
 use cliphistory_proto::HistoryItem;
+use std::collections::HashMap;
 
 /// One rendered menu entry.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MenuLine(pub String);
 
-/// Build the wire line for one entry.
-///
-/// `render_images` must reflect the frontend's declared `images` feature;
-/// when on, entries with a cached preview are emitted as wofi image escapes
-/// so capable menus render the thumbnail next to the label.
-pub fn display_line(item: &HistoryItem, render_images: bool) -> MenuLine {
-    let flat = flatten(&item.preview);
-    let line = match (render_images, &item.thumbnail) {
-        (true, Some(path)) => format!("img:{path} text:{} {flat}", item.id),
-        (true, None) => format!("text:{} {flat}", item.id),
-        (false, _) => format!("{}\t{flat}", item.id),
-    };
-    MenuLine(line)
+/// Maps echoed menu lines back to entry ids.
+#[derive(Default)]
+pub struct SelectionMap(pub HashMap<String, i64>);
+
+impl SelectionMap {
+    /// Build lines for every entry and register their selections.
+    ///
+    /// `render_images` must mirror the frontend's declared `images`
+    /// feature: image-capable menus show cached thumbnails alone;
+    /// otherwise entries render as legacy `<id>\t<label>` lines.
+    pub fn build(entries: &[HistoryItem], render_images: bool) -> (Vec<MenuLine>, Self) {
+        let mut map = SelectionMap(HashMap::with_capacity(entries.len()));
+        let mut lines = Vec::with_capacity(entries.len());
+        for entry in entries {
+            let line = if render_images {
+                match &entry.thumbnail {
+                    Some(path) => format!("img:{path}"),
+                    None => format!("text:{} {}", entry.id, flatten(&entry.preview)),
+                }
+            } else {
+                format!("{}\t{}", entry.id, flatten(&entry.preview))
+            };
+            map.0.entry(line.clone()).or_insert(entry.id);
+            lines.push(MenuLine(line));
+        }
+        (lines, map)
+    }
+
+    /// Resolve the menu's echoed selection.
+    pub fn resolve(&self, raw: &str) -> Option<i64> {
+        let line = raw.trim_end_matches(['\n', '\r']);
+        if let Some(id) = self.0.get(line) {
+            return Some(*id);
+        }
+        // Fallbacks for menus that trim/echo partially mangled lines.
+        let stripped_img = line.strip_prefix("img:").unwrap_or(line);
+        if let Some(id) = self.0.get(stripped_img) {
+            return Some(*id);
+        }
+        let body = stripped_img.strip_prefix("text:").unwrap_or(stripped_img);
+        let body = body.strip_prefix("text:").unwrap_or(body);
+        let token = body
+            .split_once('\t')
+            .map(|(id, _)| id)
+            .unwrap_or_else(|| body.split_once(' ').map(|(id, _)| id).unwrap_or(body));
+        token.trim().parse::<i64>().ok()
+    }
 }
 
 fn flatten(preview: &str) -> String {
@@ -40,37 +70,6 @@ fn flatten(preview: &str) -> String {
         .replace('\n', "\\n")
         .replace('\r', "")
         .replace('\t', "  ")
-}
-
-/// What a menu told us the user picked.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Selection {
-    Id(i64),
-    Dismissed,
-}
-
-/// Parse the raw line echoed by the menu program.
-///
-/// Accepts every dialect this crate ever emitted:
-/// * image segments — `img:<path> text:<id> <label>`
-/// * legacy — `<id>\t<label>` or bare `<id>`
-pub fn parse_selection(raw: &str) -> Option<Selection> {
-    let line = raw.trim_end_matches(['\n', '\r']);
-
-    // Strip the image segment when present.
-    let body = match line.strip_prefix("img:") {
-        Some(rest) => rest.split_once(' ')?.1,
-        None => line,
-    };
-    // Strip an explicit text-segment marker when present.
-    let body = body.strip_prefix("text:").unwrap_or(body);
-
-    // Id = first whitespace-delimited token.
-    let id_token = body
-        .split_once('\t')
-        .map(|(id, _)| id)
-        .unwrap_or_else(|| body.split_once(' ').map(|(id, _)| id).unwrap_or(body));
-    id_token.trim().parse::<i64>().ok().map(Selection::Id)
 }
 
 #[cfg(test)]
@@ -92,54 +91,52 @@ mod tests {
     }
 
     #[test]
+    fn image_entries_are_single_img_segments() {
+        let (lines, map) =
+            SelectionMap::build(&[item(21, "[image png]", Some("/thumbs/a.png"))], true);
+        assert_eq!(lines[0].0, "img:/thumbs/a.png");
+        // No spaces beyond the segment separator: nothing can leak into the
+        // file path wofi will load.
+        assert_eq!(lines[0].0.split_whitespace().count(), 1);
+        assert!(lines[0].0.chars().all(|c| !c.is_control()));
+        assert_eq!(map.resolve(&lines[0].0), Some(21));
+    }
+
+    #[test]
+    fn text_entries_in_image_mode_carry_visible_ids() {
+        let (lines, map) = SelectionMap::build(&[item(4, "plain", None)], true);
+        assert_eq!(lines[0].0, "text:4 plain");
+        assert_eq!(map.resolve(&lines[0].0), Some(4));
+    }
+
+    #[test]
     fn plain_dialect_keeps_legacy_tab_format() {
-        let line = display_line(&item(7, "two\nlines\there", None), false).0;
-        assert_eq!(line, "7\ttwo\\nlines  here");
-        assert_eq!(parse_selection(&line), Some(Selection::Id(7)));
+        let (lines, map) = SelectionMap::build(&[item(7, "two\nlines\there", None)], false);
+        assert_eq!(lines[0].0, "7\ttwo\\nlines  here");
+        assert_eq!(map.resolve(&lines[0].0), Some(7));
     }
 
     #[test]
-    fn image_dialect_leads_with_img_segment() {
-        let line = display_line(
-            &item(3, "[image image/png 12.0KB]", Some("/thumbs/abc.png")),
+    fn resolution_survives_trailing_whitespace_and_legacy_shapes() {
+        let (_, map) =
+            SelectionMap::build(&[item(9, "x", Some("/t.png")), item(5, "y", None)], true);
+        // wofi echoes the whole rendered line, trailing newline included.
+        assert_eq!(map.resolve("img:/t.png\n"), Some(9));
+        assert_eq!(map.resolve("text:5 y"), Some(5));
+        assert_eq!(map.resolve("5\ty"), Some(5));
+        assert_eq!(map.resolve(""), None);
+    }
+
+    #[test]
+    fn image_lines_are_unique_per_thumbnail() {
+        // Content-hash thumbnails guarantee one line per image; two entries
+        // with the SAME thumbnail cannot exist (dedup upstream).
+        let (lines, map) = SelectionMap::build(
+            &[item(1, "a", Some("/h1.png")), item(2, "b", Some("/h2.png"))],
             true,
-        )
-        .0;
-        // The mode token must start at column 0 for wofi to recognize it,
-        // and every character must be printable.
-        assert!(line.starts_with("img:/thumbs/abc.png text:3 [image"));
-        assert!(line.chars().all(|c| !c.is_control()));
-        assert_eq!(parse_selection(&line), Some(Selection::Id(3)));
-    }
-
-    #[test]
-    fn image_capability_without_thumb_still_carries_id() {
-        let line = display_line(&item(4, "plain", None), true).0;
-        assert_eq!(line, "text:4 plain");
-        assert_eq!(parse_selection(&line), Some(Selection::Id(4)));
-    }
-
-    #[test]
-    fn ids_survive_label_noise() {
-        // Labels containing colons, tabs-as-spaces, and markup-ish noise
-        // must never break id extraction.
-        for label in [
-            "https://example.com:8080/x",
-            "<meta http-equiv=\"x\"> & stuff",
-            "42 is the answer",
-            "",
-        ] {
-            let line = display_line(&item(9, label, Some("/t.png")), true).0;
-            assert_eq!(parse_selection(&line), Some(Selection::Id(9)), "{line}");
-        }
-    }
-
-    #[test]
-    fn legacy_formats_still_parse() {
-        assert_eq!(parse_selection("42\thello world"), Some(Selection::Id(42)));
-        assert_eq!(parse_selection("42 hello"), Some(Selection::Id(42)));
-        assert_eq!(parse_selection("42"), Some(Selection::Id(42)));
-        assert_eq!(parse_selection(""), None);
-        assert_eq!(parse_selection("x\ty"), None);
+        );
+        assert_ne!(lines[0].0, lines[1].0);
+        assert_eq!(map.resolve(&lines[0].0), Some(1));
+        assert_eq!(map.resolve(&lines[1].0), Some(2));
     }
 }

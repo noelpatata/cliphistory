@@ -6,9 +6,11 @@ use cliphistory_proto::{ModuleKind, ModuleManifest, PROTOCOL_VERSION};
 
 const MODULE_ID: &str = "frontend-wofi";
 const MENU_BIN: &str = "wofi";
+/// `-Dimage_size` controls thumbnail height in px (wofi default 32).
 const FIXED_ARGS: &[&str] = &[
     "--dmenu",
     "--allow-images",
+    "-Dimage_size=96",
     "--insensitive",
     "--prompt",
     "cliphistory",
