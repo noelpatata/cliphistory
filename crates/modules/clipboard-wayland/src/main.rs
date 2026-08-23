@@ -75,9 +75,20 @@ fn run() -> Result<()> {
         })
         .context("spawning stdin thread")?;
 
-    // Sanity probe: fail fast with a useful message when no compositor is up.
+    // Sanity probe: fail fast when no compositor/data-control exists. An
+    // empty clipboard is a normal state, not an error — the poll loop
+    // tolerates it, so those errors must not abort startup (a daemon that
+    // boots before the first copy would otherwise kill its module 5 times
+    // and disable clipboard tracking entirely).
     if let Err(e) = wlp::get_mime_types(wlp::ClipboardType::Regular, wlp::Seat::Unspecified) {
-        return Err(anyhow::anyhow!("wayland clipboard unavailable: {e}"));
+        match e {
+            wlp::Error::NoSeats | wlp::Error::ClipboardEmpty | wlp::Error::NoMimeType => {
+                log_frame_error("clipboard currently empty; waiting for content");
+            }
+            other => {
+                return Err(anyhow::anyhow!("wayland clipboard unavailable: {other}"));
+            }
+        }
     }
 
     cliphistory_clipboard_common::emit(&ClipboardToHost::Ready {
