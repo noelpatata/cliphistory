@@ -156,6 +156,27 @@ through, in order:
 Set `auto_paste = false` for copy-only behavior. Run
 `cliphistory doctor` to see which mechanism is active and why.
 
+### The paste chord
+
+Paster modules replay a single fixed chord: **Shift+Insert**. It works in
+GUI apps (GTK hardcodes it, Chromium/Google Docs honor it via its editor
+pipeline) *and* in terminals — where it traditionally pastes the PRIMARY
+selection, which is why `clipboard-wayland` claims **both** CLIPBOARD and
+PRIMARY on every copy.
+
+One caveat: some terminals bind Shift+Insert to PRIMARY-only paste or not
+at all. If auto-paste does nothing in your terminal, point the binding at
+the clipboard (alacritty example):
+
+```toml
+[[keyboard.bindings]]
+key = "Insert"
+mods = "Shift"
+action = "Paste"
+```
+
+Apps needing a different chord are covered by `general.paste_command`.
+
 ## Module development guide
 
 A module is any executable answering two commands:
@@ -297,7 +318,7 @@ crates/
 ├── core/                     # `cliphistory` binary + library
 │   └── src/{constants,config,storage,discovery,plugins,engine,ipc,cli}.rs
 └── modules/
-    ├── clipboard-common/        # shared clipboard module plumbing
+    ├── module-common/           # shared NDJSON/chord plumbing for modules
     ├── clipboard-wayland/       # wl-clipboard-rs, no external deps
     ├── clipboard-x11/           # xclip polling
     ├── frontend-common/      # shared menu plumbing

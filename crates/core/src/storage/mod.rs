@@ -2,8 +2,17 @@
 //!
 //! Deduplication is content-hash based: re-copying an existing entry bumps it
 //! to the top instead of duplicating. Pinned entries survive all pruning.
+//!
+//! Split by concern: [`prune`] owns mutations, [`thumbs`] the preview cache,
+//! [`model`] the insert types; this file holds the connection, insert and
+//! read queries.
 
-use crate::constants as c;
+mod model;
+mod prune;
+mod thumbs;
+
+pub use model::{InsertOpts, InsertOutcome};
+
 use anyhow::{Context, Result};
 use cliphistory_proto::{Content, HistoryItem};
 use rusqlite::Connection;
@@ -39,34 +48,6 @@ CREATE TABLE IF NOT EXISTS entries (
 CREATE INDEX IF NOT EXISTS idx_entries_created ON entries (created_at DESC);
 "#;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InsertOutcome {
-    /// New entry stored with this id.
-    Inserted(i64),
-    /// Already existed; promoted to top, id unchanged.
-    Duplicate(i64),
-    /// Larger than `max_item_size`; ignored.
-    TooLarge { size: i64, limit: i64 },
-}
-
-/// Per-insert behaviour knobs.
-#[derive(Debug, Clone, Copy)]
-pub struct InsertOpts {
-    pub max_item_size: i64,
-    /// Longest edge allowed for cached previews; 0 disables thumbnails.
-    pub thumbnail_size: u32,
-}
-
-impl InsertOpts {
-    /// Size cap only — used by unit tests.
-    pub fn sized(max_item_size: i64) -> Self {
-        Self {
-            max_item_size,
-            thumbnail_size: 0,
-        }
-    }
-}
-
 pub struct Storage {
     conn: Mutex<Connection>,
     path: PathBuf,
@@ -97,7 +78,6 @@ impl Storage {
             path: PathBuf::from(":memory:"),
         })
     }
-    // (test helper; kept out of the shipped API surface on purpose)
 
     pub fn db_path(&self) -> &Path {
         &self.path
@@ -113,8 +93,8 @@ impl Storage {
         total
     }
 
-    // -- writes -------------------------------------------------------------
-
+    /// Store `content`, deduplicating by hash. Thumbnails form a cache keyed
+    /// by content hash and never block or fail the entry itself.
     pub fn insert(&self, content: &Content, opts: InsertOpts) -> Result<InsertOutcome> {
         let bytes = content.bytes();
         if bytes.len() as i64 > opts.max_item_size {
@@ -166,8 +146,6 @@ impl Storage {
         };
         drop(conn);
 
-        // Thumbnails form a cache keyed by content hash: generate for new
-        // and re-copied images alike; failures never lose the entry.
         if matches!(content, Content::Image { .. }) && opts.thumbnail_size > 0 {
             if let Err(e) = self.ensure_thumbnail(&hash, &bytes, opts.thumbnail_size) {
                 log::warn!("thumbnail generation failed: {e:#}");
@@ -175,149 +153,6 @@ impl Storage {
         }
         Ok(outcome)
     }
-
-    /// Directory holding cached `<hash>.png` previews (`None` for in-memory DBs).
-    pub fn thumbs_dir(&self) -> Option<PathBuf> {
-        self.path.parent().map(|p| p.join(c::THUMBS_DIRNAME))
-    }
-
-    fn thumb_path(&self, hash: &str) -> Option<PathBuf> {
-        self.thumbs_dir().map(|d| d.join(format!("{hash}.png")))
-    }
-
-    fn ensure_thumbnail(&self, hash: &str, bytes: &[u8], max_dim: u32) -> Result<()> {
-        use cliphistory_image_utils as iu;
-        let Some(path) = self.thumb_path(hash) else {
-            return Ok(());
-        };
-        if std::fs::metadata(&path)
-            .map(|m| m.len() > 0)
-            .unwrap_or(false)
-        {
-            return Ok(());
-        }
-        let thumb = iu::thumbnail_png(bytes, max_dim)?;
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        // Atomic-ish write so a concurrent frontend never reads half a PNG.
-        let tmp = path.with_extension(format!("tmp.{}", std::process::id()));
-        std::fs::write(&tmp, &thumb)?;
-        std::fs::rename(&tmp, &path)?;
-        Ok(())
-    }
-
-    /// thumbnails are kept as well.
-    pub fn prune(&self, max_entries: i64, max_age_days: i64) -> Result<usize> {
-        let conn = self.conn.lock().expect("storage lock poisoned");
-        let mut removed = 0;
-        if max_age_days > 0 {
-            let cutoff = unix_now() as i64 - max_age_days * c::SECS_PER_DAY as i64;
-            removed += self.delete_where(
-                &conn,
-                "pinned = 0 AND created_at < ?1",
-                rusqlite::params![cutoff],
-            )?;
-        }
-        if max_entries > 0 {
-            removed += self.delete_where(
-                &conn,
-                "pinned = 0 AND id NOT IN (
-                     SELECT id FROM entries ORDER BY pinned DESC, created_at DESC LIMIT ?1
-                 )",
-                rusqlite::params![max_entries],
-            )?;
-        }
-        Ok(removed)
-    }
-
-    /// Delete rows matching `where_clause`; returns (rows removed, hashes)
-    /// so the caller can drop the matching thumbnail files.
-    fn delete_where(
-        &self,
-        conn: &Connection,
-        where_clause: &str,
-        params: impl rusqlite::Params,
-    ) -> Result<usize> {
-        let hashes: Vec<String> = {
-            let mut stmt =
-                conn.prepare(&format!("SELECT hash FROM entries WHERE {where_clause}"))?;
-            let rows = stmt.query_map(params, |r| r.get::<_, String>(0))?;
-            rows.collect::<std::result::Result<Vec<_>, _>>()?
-        };
-        if hashes.is_empty() {
-            return Ok(0);
-        }
-        // SQLite has a per-connection parameter limit; chunk to stay safe.
-        let placeholders = hashes.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-        let values: Vec<&dyn rusqlite::ToSql> =
-            hashes.iter().map(|h| h as &dyn rusqlite::ToSql).collect();
-        let n = conn.execute(
-            &format!("DELETE FROM entries WHERE hash IN ({placeholders})"),
-            values.as_slice(),
-        )?;
-        for hash in &hashes {
-            self.remove_thumb(hash);
-        }
-        Ok(n)
-    }
-
-    pub fn delete(&self, id: i64) -> Result<bool> {
-        let conn = self.conn.lock().expect("storage lock poisoned");
-        let hash: Option<String> = conn
-            .query_row(
-                "SELECT hash FROM entries WHERE id = ?1",
-                rusqlite::params![id],
-                |r| r.get(0),
-            )
-            .ok();
-        let n = conn.execute("DELETE FROM entries WHERE id = ?1", rusqlite::params![id])?;
-        if n > 0 {
-            if let Some(hash) = hash {
-                self.remove_thumb(&hash);
-            }
-        }
-        Ok(n > 0)
-    }
-
-    /// Clear history; pinned entries are kept.
-    pub fn clear(&self) -> Result<usize> {
-        let conn = self.conn.lock().expect("storage lock poisoned");
-        let hashes: Vec<String> = {
-            let mut stmt = conn.prepare("SELECT hash FROM entries WHERE pinned = 0")?;
-            let rows = stmt.query_map([], |r| r.get(0))?;
-            rows.collect::<std::result::Result<Vec<_>, _>>()?
-        };
-        let n = conn.execute("DELETE FROM entries WHERE pinned = 0", [])?;
-        for hash in &hashes {
-            self.remove_thumb(hash);
-        }
-        Ok(n)
-    }
-
-    fn remove_thumb(&self, hash: &str) {
-        if let Some(path) = self.thumb_path(hash) {
-            let _ = std::fs::remove_file(path);
-        }
-    }
-
-    pub fn set_pinned(&self, id: i64, pinned: bool) -> Result<bool> {
-        let n = self.conn.lock().expect("storage lock poisoned").execute(
-            "UPDATE entries SET pinned = ?2 WHERE id = ?1",
-            rusqlite::params![id, pinned as i64],
-        )?;
-        Ok(n > 0)
-    }
-
-    pub fn mark_used(&self, id: i64) -> Result<()> {
-        self.conn.lock().expect("storage lock poisoned").execute(
-            "UPDATE entries SET use_count = use_count + 1, last_used_at = ?2 WHERE id = ?1",
-            rusqlite::params![id, unix_now() as i64],
-        )?;
-        Ok(())
-    }
-
-    // -- reads ---------------------------------------------------------------
 
     pub fn count(&self) -> Result<i64> {
         let n = self.conn.lock().expect("storage lock poisoned").query_row(
@@ -399,25 +234,11 @@ impl Storage {
             })),
         }
     }
-
-    /// Newest entry payload.
-    #[allow(dead_code)]
-    pub fn newest_content(&self) -> Result<Option<Content>> {
-        let items = self.history_items(Some(1), None)?;
-        match items.first() {
-            Some(it) => self.content(it.id),
-            None => Ok(None),
-        }
-    }
 }
 
 pub fn content_hash(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {

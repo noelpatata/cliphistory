@@ -1,6 +1,6 @@
 [package]
-name = "cliphistory-clipboard-common"
-description = "Shared plumbing for cliphistory reader modules"
+name = "cliphistory-module-common"
+description = "Shared plumbing for cliphistory modules: NDJSON frames, manifests, paste chords"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -11,3 +11,6 @@ cliphistory-proto = { workspace = true }
 anyhow = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+log = { workspace = true }

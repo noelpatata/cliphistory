@@ -1,207 +1,206 @@
-//! Clipboard and paster module lifecycle: spawn, supervise, restart.
+//! Module lifecycle: spawn, supervise, restart.
+//!
+//! Clipboard and paster modules follow the identical lifecycle
+//! (resolve → spawn with retries → supervise → restart with backoff), so
+//! the mechanics live once in [`Slot`]-generic functions. Adding a future
+//! module kind means implementing [`Slot`], not copying control flow.
 
 use super::{AppEvent, Shared};
 use crate::constants as c;
-use crate::plugins::{ClipboardHandle, PasterHandle};
-use cliphistory_proto::{ClipboardToHost, PasterToHost};
+use crate::plugins::process::{ClipboardFrames, FrameSpec, ModuleHandle, PasterFrames};
+use cliphistory_proto::{ClipboardToHost, HostToClipboard, HostToPaster, PasterToHost};
 use std::process::Child;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::mpsc::channel;
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::{channel, Sender};
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-/// Spawn the clipboard module and wire its stdout into the event loop.
-pub fn start_clipboard(shared: &Shared) {
-    let id = shared.clipboard_id.read().unwrap().clone();
-    if id.is_empty() {
-        return;
+/// Sender slot for a module kind's stdin channel.
+pub(crate) type TxSlot<F> = Arc<RwLock<Option<Sender<<F as FrameSpec>::ToModule>>>>;
+
+/// Ties one module kind to its slots in [`Shared`] and its lifecycle events.
+pub(crate) trait Slot: 'static {
+    type Frames: FrameSpec;
+    const NAME: &'static str;
+
+    fn tx_slot(s: &Shared) -> &TxSlot<Self::Frames>;
+    fn id_slot(s: &Shared) -> &Arc<RwLock<String>>;
+    /// AppEvent emitted when the child exits.
+    fn exited(id: String) -> AppEvent;
+    /// AppEvent that re-runs `start`.
+    fn restart() -> AppEvent;
+    /// Map a stdout frame onto the app event loop.
+    fn frame_event(frame: <Self::Frames as FrameSpec>::FromModule) -> AppEvent;
+    /// Per-kind restart counter so crash loops are tracked independently.
+    fn restart_counter() -> &'static AtomicU32;
+}
+
+pub(crate) struct ClipboardSlot;
+
+impl Slot for ClipboardSlot {
+    type Frames = ClipboardFrames;
+    const NAME: &'static str = "clipboard";
+
+    fn tx_slot(s: &Shared) -> &Arc<RwLock<Option<Sender<HostToClipboard>>>> {
+        &s.clipboard_tx
     }
-    let Some(module) = shared.mm.resolve(&id) else {
-        log::error!("clipboard module '{id}' vanished; disabling until restart");
-        *shared.clipboard_id.write().unwrap() = String::new();
-        return;
-    };
+    fn id_slot(s: &Shared) -> &Arc<RwLock<String>> {
+        &s.clipboard_id
+    }
+    fn exited(id: String) -> AppEvent {
+        AppEvent::ClipboardExited(id)
+    }
+    fn restart() -> AppEvent {
+        AppEvent::RestartClipboard
+    }
+    fn frame_event(frame: ClipboardToHost) -> AppEvent {
+        AppEvent::FromClipboard(frame)
+    }
+    fn restart_counter() -> &'static AtomicU32 {
+        static C: AtomicU32 = AtomicU32::new(0);
+        &C
+    }
+}
 
-    let mut attempts = 0;
-    loop {
-        match ClipboardHandle::spawn(&module) {
-            Ok(handle) => {
-                let mut child = handle.child;
-                let tx = handle.tx.clone();
-                *shared.clipboard_tx.write().unwrap() = Some(tx);
-                log::info!("clipboard module '{id}' started");
+pub(crate) struct PasterSlot;
 
-                forward_output(&mut child, &shared.app_tx);
-                supervise(shared.app_tx.clone(), child, id.clone());
-                return;
+impl Slot for PasterSlot {
+    type Frames = PasterFrames;
+    const NAME: &'static str = "paster";
+
+    fn tx_slot(s: &Shared) -> &Arc<RwLock<Option<Sender<HostToPaster>>>> {
+        &s.paster_tx
+    }
+    fn id_slot(s: &Shared) -> &Arc<RwLock<String>> {
+        &s.paster_id
+    }
+    fn exited(id: String) -> AppEvent {
+        AppEvent::PasterExited(id)
+    }
+    fn restart() -> AppEvent {
+        AppEvent::RestartPaster
+    }
+    fn frame_event(frame: PasterToHost) -> AppEvent {
+        match frame {
+            PasterToHost::Ready { protocol_version } => {
+                log::info!("paster module ready (protocol v{protocol_version})");
+                AppEvent::Noop
             }
-            Err(e) => {
-                attempts += 1;
-                log::error!(
-                    "spawning clipboard module '{id}' failed ({attempts}/{}): {e:#}",
-                    c::CLIPBOARD_MAX_SPAWN_ATTEMPTS
-                );
-                if attempts >= c::CLIPBOARD_MAX_SPAWN_ATTEMPTS {
-                    log::error!("giving up on '{id}'; run `cliphistory doctor`");
-                    *shared.clipboard_id.write().unwrap() = String::new();
-                    *shared.clipboard_tx.write().unwrap() = None;
-                    return;
-                }
-                spin(Duration::from_millis(c::CLIPBOARD_RESPAWN_BACKOFF_MS));
-            }
+            other => AppEvent::FromPaster(other),
         }
     }
-}
-
-fn supervise(app_tx: Sender<AppEvent>, mut child: Child, id: String) {
-    std::thread::Builder::new()
-        .name("module-supervisor".into())
-        .spawn(move || {
-            let status = child.wait();
-            log::warn!("clipboard module exited: {status:?}");
-            let _ = app_tx.send(AppEvent::ClipboardExited(id));
-        })
-        .ok();
-}
-
-/// Spawn the paster module (native paste injection).
-pub fn start_paster(shared: &Shared) {
-    let id = shared.paster_id.read().unwrap().clone();
-    if id.is_empty() {
-        return;
-    }
-    let Some(module) = shared.mm.resolve(&id) else {
-        log::error!("paster module '{id}' vanished; disabling until restart");
-        *shared.paster_id.write().unwrap() = String::new();
-        return;
-    };
-
-    let mut attempts = 0;
-    loop {
-        match PasterHandle::spawn(&module) {
-            Ok(handle) => {
-                let mut child = handle.child;
-                let tx = handle.tx.clone();
-                *shared.paster_tx.write().unwrap() = Some(tx);
-                log::info!("paster module '{id}' started");
-
-                forward_paster_output(&mut child, &shared.app_tx);
-                supervise_paster(shared.app_tx.clone(), child, id.clone());
-                return;
-            }
-            Err(e) => {
-                attempts += 1;
-                log::error!(
-                    "spawning paster module '{id}' failed ({attempts}/{}): {e:#}",
-                    c::CLIPBOARD_MAX_SPAWN_ATTEMPTS
-                );
-                if attempts >= c::CLIPBOARD_MAX_SPAWN_ATTEMPTS {
-                    log::error!("giving up on paster '{id}'; run `cliphistory doctor`");
-                    *shared.paster_id.write().unwrap() = String::new();
-                    *shared.paster_tx.write().unwrap() = None;
-                    return;
-                }
-                spin(Duration::from_millis(c::CLIPBOARD_RESPAWN_BACKOFF_MS));
-            }
-        }
+    fn restart_counter() -> &'static AtomicU32 {
+        static C: AtomicU32 = AtomicU32::new(0);
+        &C
     }
 }
 
-fn supervise_paster(app_tx: Sender<AppEvent>, mut child: Child, id: String) {
-    std::thread::Builder::new()
-        .name("paster-supervisor".into())
-        .spawn(move || {
-            let status = child.wait();
-            log::warn!("paster module exited: {status:?}");
-            let _ = app_tx.send(AppEvent::PasterExited(id));
-        })
-        .ok();
+/// Spawn the module for slot `S`, retrying up to the configured limit.
+pub(crate) fn start_clipboard(shared: &Shared) {
+    start_impl::<ClipboardSlot>(shared);
 }
-
-/// Forward paster stdout frames into the main event loop.
-fn forward_paster_output(child: &mut Child, app_tx: &Sender<AppEvent>) {
-    let (tx, rx) = channel::<PasterToHost>();
-    if let Err(e) = PasterHandle::pump_output(child, tx) {
-        log::error!("paster pump failed: {e:#}");
-        return;
-    }
-    let app_tx = app_tx.clone();
-    std::thread::Builder::new()
-        .name("paster-events".into())
-        .spawn(move || {
-            for frame in rx {
-                if app_tx.send(AppEvent::FromPaster(frame)).is_err() {
-                    break;
-                }
-            }
-        })
-        .ok();
+pub(crate) fn start_paster(shared: &Shared) {
+    start_impl::<PasterSlot>(shared);
 }
-
-/// Forward clipboard stdout frames into the main event loop.
-fn forward_output(child: &mut Child, app_tx: &Sender<AppEvent>) {
-    let (tx, rx) = channel::<ClipboardToHost>();
-    if let Err(e) = ClipboardHandle::pump_output(child, tx) {
-        log::error!("pump failed: {e:#}");
-        return;
-    }
-    let app_tx = app_tx.clone();
-    std::thread::Builder::new()
-        .name("clipboard-events".into())
-        .spawn(move || {
-            for frame in rx {
-                if app_tx.send(AppEvent::FromClipboard(frame)).is_err() {
-                    break;
-                }
-            }
-        })
-        .ok();
-}
-
 pub(crate) fn schedule_restart(shared: &Shared, id: &str) {
-    *shared.clipboard_tx.write().unwrap() = None;
-
-    static RESTARTS: AtomicU32 = AtomicU32::new(0);
-    let n = RESTARTS.fetch_add(1, Ordering::Relaxed) + 1;
-    if n > c::CLIPBOARD_MAX_RUNTIME_RESTARTS {
-        log::error!("clipboard module '{id}' died {n} times; disabling.");
-        *shared.clipboard_id.write().unwrap() = String::new();
+    schedule_restart_impl::<ClipboardSlot>(shared, id);
+}
+pub(crate) fn schedule_paster_restart(shared: &Shared, id: &str) {
+    schedule_restart_impl::<PasterSlot>(shared, id);
+}
+fn start_impl<S: Slot>(shared: &Shared) {
+    let id = S::id_slot(shared).read().unwrap().clone();
+    if id.is_empty() {
         return;
     }
-    log::info!(
-        "restarting clipboard module '{id}' in {}ms",
-        c::CLIPBOARD_RESPAWN_BACKOFF_MS
-    );
-    let tx = shared.app_tx.clone();
+    let Some(module) = shared.mm.resolve(&id) else {
+        log::error!("{} module '{id}' vanished; disabling until restart", S::NAME);
+        *S::id_slot(shared).write().unwrap() = String::new();
+        return;
+    };
+
+    let mut attempts = 0;
+    loop {
+        match ModuleHandle::<S::Frames>::spawn(&module) {
+            Ok(handle) => {
+                let (mut child, tx) = handle.into_parts();
+                *S::tx_slot(shared).write().unwrap() = Some(tx);
+                log::info!("{} module '{id}' started", S::NAME);
+
+                forward_output::<S>(&mut child, &shared.app_tx);
+                supervise::<S>(shared.app_tx.clone(), child, id.clone());
+                return;
+            }
+            Err(e) => {
+                attempts += 1;
+                log::error!(
+                    "spawning {} module '{id}' failed ({attempts}/{}): {e:#}",
+                    S::NAME,
+                    c::CLIPBOARD_MAX_SPAWN_ATTEMPTS
+                );
+                if attempts >= c::CLIPBOARD_MAX_SPAWN_ATTEMPTS {
+                    log::error!("giving up on {0} '{1}'; run `cliphistory doctor`", S::NAME, id);
+                    *S::id_slot(shared).write().unwrap() = String::new();
+                    *S::tx_slot(shared).write().unwrap() = None;
+                    return;
+                }
+                spin(Duration::from_millis(c::CLIPBOARD_RESPAWN_BACKOFF_MS));
+            }
+        }
+    }
+}
+
+fn supervise<S: Slot>(app_tx: Sender<AppEvent>, mut child: Child, id: String) {
     std::thread::Builder::new()
-        .name("restart-timer".into())
+        .name(format!("{}-supervisor", S::NAME))
         .spawn(move || {
-            spin(Duration::from_millis(c::CLIPBOARD_RESPAWN_BACKOFF_MS));
-            let _ = tx.send(AppEvent::RestartClipboard);
+            let status = child.wait();
+            log::warn!("{} module exited: {status:?}", S::NAME);
+            let _ = app_tx.send(S::exited(id));
         })
         .ok();
 }
 
-pub(crate) fn schedule_paster_restart(shared: &Shared, id: &str) {
-    *shared.paster_tx.write().unwrap() = None;
+/// Forward a module's stdout frames into the main event loop.
+fn forward_output<S: Slot>(child: &mut Child, app_tx: &Sender<AppEvent>) {
+    let (tx, rx) = channel::<<S::Frames as FrameSpec>::FromModule>();
+    if let Err(e) = ModuleHandle::<S::Frames>::pump_output(child, tx) {
+        log::error!("{} pump failed: {e:#}", S::NAME);
+        return;
+    }
+    let app_tx = app_tx.clone();
+    std::thread::Builder::new()
+        .name(format!("{}-events", S::NAME))
+        .spawn(move || {
+            for frame in rx {
+                if app_tx.send(S::frame_event(frame)).is_err() {
+                    break;
+                }
+            }
+        })
+        .ok();
+}
 
-    static RESTARTS: AtomicU32 = AtomicU32::new(0);
-    let n = RESTARTS.fetch_add(1, Ordering::Relaxed) + 1;
+fn schedule_restart_impl<S: Slot>(shared: &Shared, id: &str) {
+    *S::tx_slot(shared).write().unwrap() = None;
+
+    let n = S::restart_counter().fetch_add(1, Ordering::Relaxed) + 1;
     if n > c::CLIPBOARD_MAX_RUNTIME_RESTARTS {
-        log::error!("paster module '{id}' died {n} times; disabling.");
-        *shared.paster_id.write().unwrap() = String::new();
+        log::error!("{} module '{id}' died {n} times; disabling.", S::NAME);
+        *S::id_slot(shared).write().unwrap() = String::new();
         return;
     }
     log::info!(
-        "restarting paster module '{id}' in {}ms",
+        "restarting {} module '{id}' in {}ms",
+        S::NAME,
         c::CLIPBOARD_RESPAWN_BACKOFF_MS
     );
     let tx = shared.app_tx.clone();
     std::thread::Builder::new()
-        .name("paster-restart-timer".into())
+        .name(format!("{}-restart-timer", S::NAME))
         .spawn(move || {
             spin(Duration::from_millis(c::CLIPBOARD_RESPAWN_BACKOFF_MS));
-            let _ = tx.send(AppEvent::RestartPaster);
+            let _ = tx.send(S::restart());
         })
         .ok();
 }
@@ -209,3 +208,4 @@ pub(crate) fn schedule_paster_restart(shared: &Shared, id: &str) {
 fn spin(d: Duration) {
     std::thread::sleep(d);
 }
+

@@ -132,11 +132,15 @@ Module management without editing config files:
 ```sh
 cliphistory modules list                          # installed versions + requirements
 cliphistory modules install                       # whatever discovery wants
-cliphistory modules install clipboard-x11 frontend-wofi
+cliphistory modules install clipboard-x11 frontend-wofi paster-uinput
 cliphistory modules install --force frontend-rofi # reinstall even if current
 cliphistory modules update                        # chase channel/pins for everything installed
 cliphistory modules remove frontend-dmenu
 ```
+
+Module kinds: `clipboard-*` (read the system clipboard), `frontend-*`
+(render the picker), `paster-*` (replay the paste chord — `paster-uinput`
+works everywhere, `paster-wayland` uses the Wayland virtual keyboard).
 
 Notes:
 
