@@ -56,7 +56,7 @@ cliphistory stop && cliphistory serve     # or: systemctl --user restart cliphis
 | Key             | Type   | Default | Description |
 |-----------------|--------|---------|-------------|
 | `log_level`     | string | `"info"` | Daemon log verbosity: `trace`, `debug`, `info`, `warn` or `error`. |
-| `auto_paste`    | bool   | `true`  | Replay Ctrl+V into the focused window right after a selection is written back, using the discovered paster module (`paster-wayland` on Wayland; no external tools). |
+| `auto_paste`    | bool   | `true`  | Replay the paste chord (**Shift+Insert**) into the focused window right after a selection is written back, via the discovered paster module (`paster-uinput` preferred; `paster-wayland` as Wayland-native fallback). |
 | `paste_delay_ms`| integer| `150`   | Grace period between clipboard ownership and the injected paste keystroke. |
 | `paste_command` | string | *(unset)* | Expert override: run this shell command instead of the paster module. |
 

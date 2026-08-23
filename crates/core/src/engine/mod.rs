@@ -3,52 +3,28 @@
 //! Split by responsibility:
 //! * [`bootstrap`]  – resolve/install the best modules for this machine
 //! * [`supervisor`] – clipboard module lifecycle (spawn/respawn)
-//! * [`handlers`]   – IPC request processing (show/copy/status/doctor)
+//! * [`dispatch`]   – IPC routing; [`actions`] business logic; [`report`] doctor
+//! * [`state`]      – the `Shared` engine state and app events
 
 pub(crate) mod bootstrap;
-pub(crate) mod handlers;
+pub(crate) mod actions;
+pub(crate) mod dispatch;
+pub(crate) mod report;
+pub(crate) mod state;
 pub(crate) mod supervisor;
 
 use crate::config::{self, Config};
-use crate::discovery;
 use crate::discovery::{detect_session, RealEnv};
-
 use crate::plugins::ModuleManager;
 use crate::storage::{unix_now, Storage};
 use anyhow::{bail, Context, Result};
-use cliphistory_proto::{
-    ClipboardToHost, HostToClipboard, HostToPaster, PasterToHost,
-};
+use cliphistory_proto::{ClipboardToHost, HostToClipboard, HostToPaster, PasterToHost};
+
+use state::{AppEvent, Shared};
 
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::sync::mpsc::{channel, Sender};
+use std::sync::mpsc::channel;
 use std::sync::{Arc, RwLock};
-
-#[derive(Clone)]
-pub(crate) struct Shared {
-    cfg: Config,
-    storage: Arc<Storage>,
-    mm: Arc<ModuleManager>,
-    clipboard_tx: Arc<RwLock<Option<Sender<HostToClipboard>>>>,
-    clipboard_id: Arc<RwLock<String>>,
-    paster_tx: Arc<RwLock<Option<Sender<HostToPaster>>>>,
-    paster_id: Arc<RwLock<String>>,
-    frontend_id: Arc<RwLock<String>>,
-    started_at: u64,
-    session: discovery::SessionType,
-    app_tx: Sender<AppEvent>,
-}
-
-pub(crate) enum AppEvent {
-    FromClipboard(ClipboardToHost),
-    FromPaster(PasterToHost),
-    Conn(UnixStream),
-    ClipboardExited(String),
-    PasterExited(String),
-    RestartClipboard,
-    RestartPaster,
-    Shutdown,
-}
 
 // ---------------------------------------------------------------------------
 // Entry point
@@ -160,7 +136,8 @@ fn run_inner(cfg: Config, socket_path: std::path::PathBuf) -> Result<()> {
             AppEvent::FromPaster(PasterToHost::Error { message }) => {
                 log::warn!("paster: {message}");
             }
-            AppEvent::Conn(stream) => handlers::handle_conn(&shared, stream),
+            AppEvent::Noop => {}
+            AppEvent::Conn(stream) => dispatch::handle_conn(&shared, stream),
             AppEvent::ClipboardExited(id) => supervisor::schedule_restart(&shared, &id),
             AppEvent::RestartClipboard => supervisor::start_clipboard(&shared),
             AppEvent::PasterExited(id) => supervisor::schedule_paster_restart(&shared, &id),

@@ -4,11 +4,11 @@
 //! Injection is attempted through, in order:
 //!
 //! 1. the config's `general.paste_command` expert override,
-//! 2. a native paster module (e.g. `paster-wayland`, virtual-keyboard based),
+//! 2. a native paster module (which owns its own key chord),
 //! 3. an external tool probed on PATH for the current session.
 //!
-//! Each external tool has its own invocation string; adding support for a new
-//! one is a single table entry.
+//! The core stays display-server agnostic: it never knows which keys a
+//! module sends.
 
 use anyhow::Result;
 use cliphistory_proto::HostToPaster;
@@ -64,11 +64,6 @@ pub fn find_tool(session: SessionType) -> Option<&'static str> {
         .map(|t| t.cmd)
 }
 
-/// True when some external tool could fire in `session`.
-pub fn tool_available(session: SessionType) -> bool {
-    find_tool(session).is_some()
-}
-
 /// Fire `command` after `delay` ms so the clipboard module has taken
 /// ownership of the selection. Detached from the caller.
 pub fn schedule_command(command: String, delay_ms: u64) {
@@ -85,7 +80,7 @@ pub fn schedule_command(command: String, delay_ms: u64) {
         .ok();
 }
 
-/// Ask the running paster module to replay the shortcut after `delay` ms.
+/// Ask the running paster module to replay its paste chord after `delay` ms.
 /// Detached from the caller; failures are logged by the supervisor when the
 /// module reports them.
 pub fn schedule_module(tx: Sender<HostToPaster>, delay_ms: u64) {

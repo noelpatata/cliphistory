@@ -12,9 +12,11 @@ path = "src/main.rs"
 
 [dependencies]
 cliphistory-proto = { workspace = true }
+cliphistory-module-common = { workspace = true }
 anyhow = { workspace = true }
 log = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }
+env_logger = { workspace = true }
 wayland-client = { workspace = true }
 wayland-scanner = { workspace = true }

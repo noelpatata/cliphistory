@@ -13,8 +13,9 @@ path = "src/main.rs"
 [dependencies]
 cliphistory-proto = { workspace = true }
 cliphistory-image-utils = { workspace = true }
-cliphistory-clipboard-common = { workspace = true }
+cliphistory-module-common = { workspace = true }
 anyhow = { workspace = true }
+log = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }

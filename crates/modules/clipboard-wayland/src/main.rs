@@ -2,21 +2,21 @@
 //!
 //! Samples the clipboard through `wl-clipboard-rs` (native Wayland client,
 //! no external binaries) and can take ownership of the clipboard to fulfil
-//! the daemon's write-back requests.
+//! the daemon's write-back requests. The polling lifecycle lives in
+//! [`cliphistory_module_common::reader`]; this file is the platform adapter.
 
 use anyhow::{Context, Result};
-use cliphistory_clipboard_common::POLL_INTERVAL_MS;
+use cliphistory_module_common as mcommon;
+use cliphistory_module_common::reader::PollingReader;
 use cliphistory_proto::{
-    ClipboardToHost, Content, HostToClipboard, ModuleKind, ModuleManifest, CAP_READ, CAP_WRITE,
+    ClipboardToHost, Content, ModuleKind, ModuleManifest, CAP_READ, CAP_WRITE,
     PROTOCOL_VERSION,
 };
-use sha2::{Digest, Sha256};
-use std::io::{BufReader, Read};
-use std::sync::mpsc;
-use std::time::Duration;
 use wl_clipboard_rs::{copy as wlc, paste as wlp};
 
 const MODULE_ID: &str = "clipboard-wayland";
+/// How often the clipboard is re-sampled when no change notification exists.
+const POLL_INTERVAL_MS: u64 = 500;
 
 fn manifest() -> ModuleManifest {
     ModuleManifest {
@@ -31,26 +31,82 @@ fn manifest() -> ModuleManifest {
     }
 }
 
-enum Incoming {
-    Control(HostToClipboard),
+struct WaylandReader;
+
+impl PollingReader for WaylandReader {
+    fn poll_interval_ms(&self) -> u64 {
+        POLL_INTERVAL_MS
+    }
+
+    /// Fail fast when no compositor/data-control exists. An empty clipboard
+    /// is a normal state, not an error — the poll loop tolerates it, so
+    /// those errors must not abort startup (a daemon that boots before the
+    /// first copy would otherwise kill its module 5 times and disable
+    /// clipboard tracking entirely).
+    fn probe(&mut self) -> Result<()> {
+        if let Err(e) = wlp::get_mime_types(wlp::ClipboardType::Regular, wlp::Seat::Unspecified) {
+            match e {
+                wlp::Error::NoSeats | wlp::Error::ClipboardEmpty | wlp::Error::NoMimeType => {
+                    log_frame_error("clipboard currently empty; waiting for content");
+                }
+                other => {
+                    return Err(anyhow::anyhow!("wayland clipboard unavailable: {other}"));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Ask TARGETS first: browsers offer text/html for images, so flavor
+    /// order — not "text first" — decides what we capture.
+    fn sample(&self) -> Result<Option<Content>> {
+        let offered_set =
+            wlp::get_mime_types(wlp::ClipboardType::Regular, wlp::Seat::Unspecified)?;
+        let mut offered: Vec<String> = offered_set.into_iter().collect();
+        offered.sort();
+        let has = |want: &str| offered.iter().any(|o| o.eq_ignore_ascii_case(want));
+
+        if has("image/png") {
+            return read_specific("image/png").map(Some);
+        }
+        const PLAIN_TEXT_MIMES: &[&str] = &[
+            "text/plain;charset=utf-8",
+            "text/plain",
+            "utf8_string",
+            "string",
+            "text",
+        ];
+        if PLAIN_TEXT_MIMES.iter().any(|m| has(m)) {
+            return read_specific("text/plain;charset=utf-8").map(Some);
+        }
+        Ok(None)
+    }
+
+    /// Take ownership of the clipboard with `content`. Detached thread:
+    /// serving the selection lasts until another owner appears; the event
+    /// loop must keep running.
+    fn claim_async(&self, content: &Content) {
+        std::thread::spawn({
+            let content = content.clone();
+            move || {
+                if let Err(e) = set_clipboard(&content) {
+                    log_frame_error(&format!("set-clipboard failed: {e:#}"));
+                }
+            }
+        });
+    }
 }
 
 fn main() -> std::process::ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.iter().any(|a| a == "--manifest") {
-        return match cliphistory_clipboard_common::print_manifest(&manifest()) {
-            Ok(()) => std::process::ExitCode::SUCCESS,
-            Err(e) => {
-                eprintln!("{e:#}");
-                std::process::ExitCode::FAILURE
-            }
-        };
+        return mcommon::manifest_main(manifest);
     }
 
     match run() {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(e) => {
-            let _ = cliphistory_clipboard_common::emit(&ClipboardToHost::Error {
+            let _ = mcommon::emit(&ClipboardToHost::Error {
                 message: format!("{e:#}"),
             });
             eprintln!("error: {e:#}");
@@ -60,112 +116,25 @@ fn main() -> std::process::ExitCode {
 }
 
 fn run() -> Result<()> {
-    let (tx, rx) = mpsc::channel::<Incoming>();
-
-    // stdin -> control frames
-    std::thread::Builder::new()
-        .name("stdin".into())
-        .spawn(move || {
-            let mut reader = BufReader::new(std::io::stdin().lock());
-            while let Some(frame) = cliphistory_clipboard_common::next_host_frame(&mut reader) {
-                if tx.send(Incoming::Control(frame)).is_err() {
-                    break;
-                }
-            }
-        })
-        .context("spawning stdin thread")?;
-
-    // Sanity probe: fail fast when no compositor/data-control exists. An
-    // empty clipboard is a normal state, not an error — the poll loop
-    // tolerates it, so those errors must not abort startup (a daemon that
-    // boots before the first copy would otherwise kill its module 5 times
-    // and disable clipboard tracking entirely).
-    if let Err(e) = wlp::get_mime_types(wlp::ClipboardType::Regular, wlp::Seat::Unspecified) {
-        match e {
-            wlp::Error::NoSeats | wlp::Error::ClipboardEmpty | wlp::Error::NoMimeType => {
-                log_frame_error("clipboard currently empty; waiting for content");
-            }
-            other => {
-                return Err(anyhow::anyhow!("wayland clipboard unavailable: {other}"));
-            }
-        }
-    }
-
-    cliphistory_clipboard_common::emit(&ClipboardToHost::Ready {
+    let mut reader = WaylandReader;
+    // Sanity probe happens inside connect(); a failure here aborts startup
+    // with a precise message instead of a silent dead module.
+    reader.probe()?;
+    mcommon::emit(&ClipboardToHost::Ready {
         protocol_version: PROTOCOL_VERSION,
     })?;
-    let mut last_hash = String::new();
-
-    loop {
-        match rx.recv_timeout(Duration::from_millis(POLL_INTERVAL_MS)) {
-            Ok(Incoming::Control(HostToClipboard::Ping)) => {
-                cliphistory_clipboard_common::emit(&ClipboardToHost::Pong)?;
-            }
-            Ok(Incoming::Control(HostToClipboard::SetClipboard { content })) => {
-                // Detached thread: serving the selection lasts until another
-                // owner appears; the event loop must keep running.
-                std::thread::spawn(move || {
-                    if let Err(e) = set_clipboard(&content) {
-                        log_frame_error(&format!("set-clipboard failed: {e:#}"));
-                    }
-                });
-            }
-            Ok(Incoming::Control(HostToClipboard::Stop))
-            | Err(mpsc::RecvTimeoutError::Disconnected) => {
-                return Ok(());
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => match read_clipboard() {
-                Ok(Some(content)) => {
-                    let hash = content_hash(&content.bytes());
-                    if hash != last_hash {
-                        last_hash = hash;
-                        cliphistory_clipboard_common::emit(&ClipboardToHost::Event { content })?;
-                    }
-                }
-                Ok(None) => {}
-                Err(e) => log_frame_error(&format!("read failed: {e:#}")),
-            },
-        }
-    }
+    mcommon::reader::run_polling(&mut reader)
 }
 
 fn log_frame_error(msg: &str) {
-    let _ = cliphistory_clipboard_common::emit(&ClipboardToHost::Error {
+    let _ = mcommon::emit(&ClipboardToHost::Error {
         message: msg.to_string(),
     });
 }
 
 // ---------------------------------------------------------------------------
-// Reading
+// Reading / writing via wl-clipboard-rs
 // ---------------------------------------------------------------------------
-
-/// Plain-text MIME types we accept (lowercased). `text/html` is
-/// deliberately absent: browsers offer it alongside everything else, and
-/// capturing it turns copied images into `<img src=...>` markup soup.
-const PLAIN_TEXT_MIMES: &[&str] = &[
-    "text/plain;charset=utf-8",
-    "text/plain",
-    "utf8_string",
-    "string",
-    "text",
-];
-
-/// Read the regular clipboard, choosing the best offered flavor:
-/// `image/png` beats plain text; anything else is ignored.
-fn read_clipboard() -> Result<Option<Content>> {
-    let offered_set = wlp::get_mime_types(wlp::ClipboardType::Regular, wlp::Seat::Unspecified)?;
-    let mut offered: Vec<String> = offered_set.into_iter().collect();
-    offered.sort();
-    let has = |want: &str| offered.iter().any(|o| o.eq_ignore_ascii_case(want));
-
-    if has("image/png") {
-        return read_specific("image/png").map(Some);
-    }
-    if PLAIN_TEXT_MIMES.iter().any(|m| has(m)) {
-        return read_specific("text/plain;charset=utf-8").map(Some);
-    }
-    Ok(None)
-}
 
 fn read_specific(mime: &str) -> Result<Content> {
     let result = wlp::get_contents(
@@ -175,6 +144,7 @@ fn read_specific(mime: &str) -> Result<Content> {
     );
     match result {
         Ok((mut pipe, _actual_mime)) => {
+            use std::io::Read;
             let mut buf = Vec::new();
             pipe.read_to_end(&mut buf)?;
             if buf.is_empty() {
@@ -195,31 +165,37 @@ fn read_specific(mime: &str) -> Result<Content> {
             }
         }
         Err(wlp::Error::NoSeats | wlp::Error::ClipboardEmpty | wlp::Error::NoMimeType) => {
-            Err(anyhow::anyhow!("flavor vanished: {mime}"))
+            anyhow::bail!("flavor vanished: {mime}")
         }
-        Err(e) => Err(anyhow::anyhow!("paste of {mime} failed: {e}")),
+        Err(e) => anyhow::bail!("paste of {mime} failed: {e}"),
     }
 }
-
-// ---------------------------------------------------------------------------
-// Writing
-// ---------------------------------------------------------------------------
 
 fn set_clipboard(content: &Content) -> Result<()> {
-    let opts = wlc::Options::new();
-    match content {
-        Content::Text { text } => opts.copy(
-            wlc::Source::Bytes(text.clone().into_bytes().into_boxed_slice()),
-            wlc::MimeType::Text,
-        ),
-        Content::Image { mime, data, .. } => opts.copy(
-            wlc::Source::Bytes(data.clone().into_boxed_slice()),
-            wlc::MimeType::Specific(mime.clone()),
-        ),
+    fn claim(
+        content: &Content,
+        clipboard: wlc::ClipboardType,
+    ) -> std::result::Result<(), wlc::Error> {
+        let mut opts = wlc::Options::new();
+        opts.clipboard(clipboard);
+        match content {
+            Content::Text { text } => opts.copy(
+                wlc::Source::Bytes(text.clone().into_bytes().into_boxed_slice()),
+                wlc::MimeType::Text,
+            ),
+            Content::Image { mime, data, .. } => opts.copy(
+                wlc::Source::Bytes(data.clone().into_boxed_slice()),
+                wlc::MimeType::Specific(mime.clone()),
+            ),
+        }
     }
-    .context("claiming clipboard ownership")
-}
 
-pub(crate) fn content_hash(bytes: &[u8]) -> String {
-    hex::encode(Sha256::digest(bytes))
+    // Claim CLIPBOARD, then also PRIMARY, so Shift+Insert / middle-click
+    // style pastes find our data regardless of which selection they read.
+    // Each claim keeps serving until someone else takes the selection over.
+    claim(content, wlc::ClipboardType::Regular).context("claiming clipboard ownership")?;
+    if let Err(e) = claim(content, wlc::ClipboardType::Primary) {
+        log::debug!("primary selection claim failed: {e}");
+    }
+    Ok(())
 }

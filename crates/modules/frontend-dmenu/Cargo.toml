@@ -14,4 +14,3 @@ path = "src/main.rs"
 cliphistory-proto = { workspace = true }
 cliphistory-frontend-common = { workspace = true }
 anyhow = { workspace = true }
-serde_json = { workspace = true }

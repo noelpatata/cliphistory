@@ -4,9 +4,9 @@ members = [
     "crates/proto",
     "crates/image-utils",
     "crates/core",
-    "crates/modules/clipboard-common",
     "crates/modules/clipboard-wayland",
     "crates/modules/clipboard-x11",
+    "crates/modules/module-common",
     "crates/modules/paster-uinput",
     "crates/modules/paster-wayland",
     "crates/modules/frontend-common",
@@ -16,7 +16,7 @@ members = [
 ]
 
 [workspace.package]
-version = "2.0.9"
+version = "2.0.10"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/noelpatata/cliphistory"
@@ -25,8 +25,8 @@ authors = ["cliphistory contributors"]
 [workspace.dependencies]
 cliphistory-proto = { path = "crates/proto" }
 cliphistory-image-utils = { path = "crates/image-utils" }
-cliphistory-clipboard-common = { path = "crates/modules/clipboard-common" }
 cliphistory-frontend-common = { path = "crates/modules/frontend-common" }
+cliphistory-module-common = { path = "crates/modules/module-common" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
@@ -44,6 +44,7 @@ tempfile = "3"
 libc = "0.2"
 wl-clipboard-rs = "0.9"
 wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "staging"] }
 wayland-scanner = "0.31"
 
 [profile.release]

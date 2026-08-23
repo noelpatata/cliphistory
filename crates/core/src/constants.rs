@@ -60,8 +60,6 @@ pub const PASTE_DELAY_MS: u64 = 150;
 
 pub const PASTER_CANDIDATES_WAYLAND: &[&str] = &["paster-uinput", "paster-wayland"];
 pub const PASTER_CANDIDATES_X11: &[&str] = &["paster-uinput"];
-/// Example wired for `wtype` (pacman -S wtype).
-pub const PASTE_COMMAND_EXAMPLE: &str = "wtype -M ctrl -k v -m ctrl";
 
 pub const SECS_PER_DAY: u64 = 86_400;
 
