@@ -7,6 +7,8 @@ members = [
     "crates/modules/clipboard-common",
     "crates/modules/clipboard-wayland",
     "crates/modules/clipboard-x11",
+    "crates/modules/paster-uinput",
+    "crates/modules/paster-wayland",
     "crates/modules/frontend-common",
     "crates/modules/frontend-rofi",
     "crates/modules/frontend-wofi",
@@ -14,7 +16,7 @@ members = [
 ]
 
 [workspace.package]
-version = "2.0.7"
+version = "2.0.8"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/noelpatata/cliphistory"
@@ -39,7 +41,10 @@ base64 = "0.22"
 ureq = { version = "2", features = ["json"] }
 env_logger = "0.11"
 tempfile = "3"
+libc = "0.2"
 wl-clipboard-rs = "0.9"
+wayland-client = "0.31"
+wayland-scanner = "0.31"
 
 [profile.release]
 lto = "thin"

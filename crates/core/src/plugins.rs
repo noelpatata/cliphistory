@@ -14,8 +14,8 @@ use crate::config::ModulesConfig;
 use crate::constants as c;
 use anyhow::{anyhow, bail, Context, Result};
 use cliphistory_proto::{
-    ClipboardToHost, HistoryItem, HostToClipboard, ModuleKind, ModuleManifest, ShowRequest,
-    ShowResponse, PROTOCOL_VERSION,
+    ClipboardToHost, HistoryItem, HostToClipboard, HostToPaster, ModuleKind, ModuleManifest,
+    PasterToHost, ShowRequest, ShowResponse, PROTOCOL_VERSION,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -598,8 +598,82 @@ impl ClipboardHandle {
     }
 }
 
-pub fn verify_sha256(bytes: &[u8], expected_hex: &str) -> Result<()> {
-    let got = hex::encode(Sha256::digest(bytes));
+/// Writer half of a running paster: sends control frames on stdin.
+pub struct PasterHandle {
+    pub child: Child,
+    pub(crate) tx: Sender<HostToPaster>,
+}
+
+impl PasterHandle {
+    pub fn spawn(module: &InstalledModule) -> Result<Self> {
+        let mut child = Command::new(&module.bin_path)
+            .arg("run")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .with_context(|| format!("spawning paster {}", module.bin_path.display()))?;
+
+        let raw_stdin: ChildStdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| anyhow!("paster stdin unavailable"))?;
+        let (tx, rx) = std::sync::mpsc::channel::<HostToPaster>();
+        std::thread::Builder::new()
+            .name("paster-stdin".into())
+            .spawn(move || {
+                let mut w = std::io::LineWriter::new(raw_stdin);
+                for frame in rx {
+                    if serde_json::to_writer(&mut w, &frame).is_err() {
+                        break;
+                    }
+                    if w.write_all(b"\n").is_err() {
+                        break;
+                    }
+                    if matches!(frame, HostToPaster::Stop) {
+                        break;
+                    }
+                }
+            })?;
+        Ok(Self { child, tx })
+    }
+
+    /// Queue a control frame for the paster's stdin.
+    pub fn send(&self, frame: HostToPaster) -> Result<()> {
+        self.tx
+            .send(frame)
+            .map_err(|_| anyhow::anyhow!("paster stdin closed"))
+    }
+
+    /// Spawn a thread parsing NDJSON stdout frames into a channel.
+    pub fn pump_output(child: &mut Child, out: Sender<PasterToHost>) -> Result<()> {
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| anyhow!("paster stdout unavailable"))?;
+        std::thread::Builder::new()
+            .name("paster-stdout".into())
+            .spawn(move || {
+                for line in BufReader::new(stdout).lines() {
+                    let Ok(line) = line else { break };
+                    if line.trim().is_empty() {
+                        continue;
+                    }
+                    match serde_json::from_str::<PasterToHost>(&line) {
+                        Ok(frame) => {
+                            if out.send(frame).is_err() {
+                                break;
+                            }
+                        }
+                        Err(e) => log::warn!("unparsable paster line: {e}: {line:.120}"),
+                    }
+                }
+            })?;
+        Ok(())
+    }
+}
+
+pub fn verify_sha256(bytes: &[u8], expected_hex: &str) -> Result<()> {    let got = hex::encode(Sha256::digest(bytes));
     if !got.eq_ignore_ascii_case(expected_hex.trim()) {
         bail!("sha256 mismatch: expected {expected_hex}, got {got}");
     }

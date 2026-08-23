@@ -2,8 +2,8 @@
 
 use super::{AppEvent, Shared};
 use crate::constants as c;
-use crate::plugins::ClipboardHandle;
-use cliphistory_proto::ClipboardToHost;
+use crate::plugins::{ClipboardHandle, PasterHandle};
+use cliphistory_proto::{ClipboardToHost, PasterToHost};
 use std::process::Child;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::channel;
@@ -64,6 +64,80 @@ fn supervise(app_tx: Sender<AppEvent>, mut child: Child, id: String) {
         .ok();
 }
 
+/// Spawn the paster module (native paste injection).
+pub fn start_paster(shared: &Shared) {
+    let id = shared.paster_id.read().unwrap().clone();
+    if id.is_empty() {
+        return;
+    }
+    let Some(module) = shared.mm.resolve(&id) else {
+        log::error!("paster module '{id}' vanished; disabling until restart");
+        *shared.paster_id.write().unwrap() = String::new();
+        return;
+    };
+
+    let mut attempts = 0;
+    loop {
+        match PasterHandle::spawn(&module) {
+            Ok(handle) => {
+                let mut child = handle.child;
+                let tx = handle.tx.clone();
+                *shared.paster_tx.write().unwrap() = Some(tx);
+                log::info!("paster module '{id}' started");
+
+                forward_paster_output(&mut child, &shared.app_tx);
+                supervise_paster(shared.app_tx.clone(), child, id.clone());
+                return;
+            }
+            Err(e) => {
+                attempts += 1;
+                log::error!(
+                    "spawning paster module '{id}' failed ({attempts}/{}): {e:#}",
+                    c::CLIPBOARD_MAX_SPAWN_ATTEMPTS
+                );
+                if attempts >= c::CLIPBOARD_MAX_SPAWN_ATTEMPTS {
+                    log::error!("giving up on paster '{id}'; run `cliphistory doctor`");
+                    *shared.paster_id.write().unwrap() = String::new();
+                    *shared.paster_tx.write().unwrap() = None;
+                    return;
+                }
+                spin(Duration::from_millis(c::CLIPBOARD_RESPAWN_BACKOFF_MS));
+            }
+        }
+    }
+}
+
+fn supervise_paster(app_tx: Sender<AppEvent>, mut child: Child, id: String) {
+    std::thread::Builder::new()
+        .name("paster-supervisor".into())
+        .spawn(move || {
+            let status = child.wait();
+            log::warn!("paster module exited: {status:?}");
+            let _ = app_tx.send(AppEvent::PasterExited(id));
+        })
+        .ok();
+}
+
+/// Forward paster stdout frames into the main event loop.
+fn forward_paster_output(child: &mut Child, app_tx: &Sender<AppEvent>) {
+    let (tx, rx) = channel::<PasterToHost>();
+    if let Err(e) = PasterHandle::pump_output(child, tx) {
+        log::error!("paster pump failed: {e:#}");
+        return;
+    }
+    let app_tx = app_tx.clone();
+    std::thread::Builder::new()
+        .name("paster-events".into())
+        .spawn(move || {
+            for frame in rx {
+                if app_tx.send(AppEvent::FromPaster(frame)).is_err() {
+                    break;
+                }
+            }
+        })
+        .ok();
+}
+
 /// Forward clipboard stdout frames into the main event loop.
 fn forward_output(child: &mut Child, app_tx: &Sender<AppEvent>) {
     let (tx, rx) = channel::<ClipboardToHost>();
@@ -104,6 +178,30 @@ pub(crate) fn schedule_restart(shared: &Shared, id: &str) {
         .spawn(move || {
             spin(Duration::from_millis(c::CLIPBOARD_RESPAWN_BACKOFF_MS));
             let _ = tx.send(AppEvent::RestartClipboard);
+        })
+        .ok();
+}
+
+pub(crate) fn schedule_paster_restart(shared: &Shared, id: &str) {
+    *shared.paster_tx.write().unwrap() = None;
+
+    static RESTARTS: AtomicU32 = AtomicU32::new(0);
+    let n = RESTARTS.fetch_add(1, Ordering::Relaxed) + 1;
+    if n > c::CLIPBOARD_MAX_RUNTIME_RESTARTS {
+        log::error!("paster module '{id}' died {n} times; disabling.");
+        *shared.paster_id.write().unwrap() = String::new();
+        return;
+    }
+    log::info!(
+        "restarting paster module '{id}' in {}ms",
+        c::CLIPBOARD_RESPAWN_BACKOFF_MS
+    );
+    let tx = shared.app_tx.clone();
+    std::thread::Builder::new()
+        .name("paster-restart-timer".into())
+        .spawn(move || {
+            spin(Duration::from_millis(c::CLIPBOARD_RESPAWN_BACKOFF_MS));
+            let _ = tx.send(AppEvent::RestartPaster);
         })
         .ok();
 }

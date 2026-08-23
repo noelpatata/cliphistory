@@ -16,7 +16,9 @@ use crate::discovery::{detect_session, RealEnv};
 use crate::plugins::ModuleManager;
 use crate::storage::{unix_now, Storage};
 use anyhow::{bail, Context, Result};
-use cliphistory_proto::{ClipboardToHost, HostToClipboard};
+use cliphistory_proto::{
+    ClipboardToHost, HostToClipboard, HostToPaster, PasterToHost,
+};
 
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::mpsc::{channel, Sender};
@@ -29,6 +31,8 @@ pub(crate) struct Shared {
     mm: Arc<ModuleManager>,
     clipboard_tx: Arc<RwLock<Option<Sender<HostToClipboard>>>>,
     clipboard_id: Arc<RwLock<String>>,
+    paster_tx: Arc<RwLock<Option<Sender<HostToPaster>>>>,
+    paster_id: Arc<RwLock<String>>,
     frontend_id: Arc<RwLock<String>>,
     started_at: u64,
     session: discovery::SessionType,
@@ -37,9 +41,12 @@ pub(crate) struct Shared {
 
 pub(crate) enum AppEvent {
     FromClipboard(ClipboardToHost),
+    FromPaster(PasterToHost),
     Conn(UnixStream),
     ClipboardExited(String),
+    PasterExited(String),
     RestartClipboard,
+    RestartPaster,
     Shutdown,
 }
 
@@ -84,6 +91,8 @@ fn run_inner(cfg: Config, socket_path: std::path::PathBuf) -> Result<()> {
         mm,
         clipboard_tx: Arc::new(RwLock::new(None)),
         clipboard_id: Arc::new(RwLock::new(String::new())),
+        paster_tx: Arc::new(RwLock::new(None)),
+        paster_id: Arc::new(RwLock::new(String::new())),
         frontend_id: Arc::new(RwLock::new(String::new())),
         started_at: unix_now(),
         session: detect_session(&RealEnv),
@@ -95,6 +104,7 @@ fn run_inner(cfg: Config, socket_path: std::path::PathBuf) -> Result<()> {
     let desired = bootstrap::resolve_desired(&mut shared)?;
     *shared.clipboard_id.write().unwrap() = desired.clipboard.unwrap_or_default();
     *shared.frontend_id.write().unwrap() = desired.frontend.unwrap_or_default();
+    *shared.paster_id.write().unwrap() = desired.paster.unwrap_or_default();
 
     if shared.clipboard_id.read().unwrap().is_empty() {
         log::warn!("no usable clipboard module; run `cliphistory doctor`");
@@ -126,11 +136,13 @@ fn run_inner(cfg: Config, socket_path: std::path::PathBuf) -> Result<()> {
             })?;
     }
 
-    // ----- clipboard module --------------------------------------------------
+    // ----- clipboard / paster modules ---------------------------------------
     if !shared.clipboard_id.read().unwrap().is_empty() {
         supervisor::start_clipboard(&shared);
     }
-    // Auto-paste is handled by crate::paste (external tool injection).
+    if !shared.paster_id.read().unwrap().is_empty() {
+        supervisor::start_paster(&shared);
+    }
 
     // ----- main loop ----------------------------------------------------------
     while let Ok(event) = app_rx.recv() {
@@ -141,9 +153,18 @@ fn run_inner(cfg: Config, socket_path: std::path::PathBuf) -> Result<()> {
             AppEvent::FromClipboard(frame) => {
                 log::debug!("clipboard module frame: {frame:?}");
             }
+            AppEvent::FromPaster(PasterToHost::Ready { protocol_version }) => {
+                log::info!("paster module ready (protocol v{protocol_version})");
+            }
+            AppEvent::FromPaster(PasterToHost::Pong) => {}
+            AppEvent::FromPaster(PasterToHost::Error { message }) => {
+                log::warn!("paster: {message}");
+            }
             AppEvent::Conn(stream) => handlers::handle_conn(&shared, stream),
             AppEvent::ClipboardExited(id) => supervisor::schedule_restart(&shared, &id),
             AppEvent::RestartClipboard => supervisor::start_clipboard(&shared),
+            AppEvent::PasterExited(id) => supervisor::schedule_paster_restart(&shared, &id),
+            AppEvent::RestartPaster => supervisor::start_paster(&shared),
             AppEvent::Shutdown => break,
         }
     }
@@ -181,6 +202,9 @@ fn shutdown(shared: &Shared, socket_path: &std::path::Path) {
     log::info!("shutting down");
     if let Some(tx) = shared.clipboard_tx.read().unwrap().as_ref() {
         tx.send(HostToClipboard::Stop).ok();
+    }
+    if let Some(tx) = shared.paster_tx.read().unwrap().as_ref() {
+        tx.send(HostToPaster::Stop).ok();
     }
     let _ = std::fs::remove_file(socket_path);
 }
