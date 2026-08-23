@@ -56,7 +56,7 @@ jobs:
         run: |
           mkdir -p out
           cd "target/${{ matrix.target }}/release"
-          for bin in cliphistory cliphistory-clipboard-* cliphistory-frontend-*; do
+          for bin in cliphistory cliphistory-clipboard-* cliphistory-frontend-* cliphistory-paster-*; do
             # -f: exists; -x: executables only (skips rustc's *.d dep-info files)
             [ -f "$bin" ] && [ -x "$bin" ] && cp "$bin" \
               "../../../out/${{ matrix.target }}__${bin}"
@@ -105,7 +105,7 @@ jobs:
         if: steps.ver.outputs.exists == 'no'
         run: |
           mkdir -p meta
-          for bin in target/release/cliphistory-clipboard-* target/release/cliphistory-frontend-*; do
+          for bin in target/release/cliphistory-clipboard-* target/release/cliphistory-frontend-* target/release/cliphistory-paster-*; do
             # executables only — skip *.d dep-info files rustc leaves behind
             [ -f "$bin" ] && [ -x "$bin" ] || continue
             base="$(basename "$bin")"
@@ -168,7 +168,7 @@ jobs:
                   module_id = binary.removeprefix("cliphistory-")
                   info = meta.get(module_id)
                   kind = info["kind"] if info else (
-                      "reader" if module_id.startswith("clipboard-") else "frontend")
+                      "clipboard" if module_id.startswith("clipboard-") else ("paster" if module_id.startswith("paster-") else "frontend"))
                   entry["modules"].append({
                       "id": module_id,
                       "kind": kind,
