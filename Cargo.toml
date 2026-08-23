@@ -11,11 +11,10 @@ members = [
     "crates/modules/frontend-rofi",
     "crates/modules/frontend-wofi",
     "crates/modules/frontend-dmenu",
-    "crates/modules/paster-wayland",
 ]
 
 [workspace.package]
-version = "2.0.4"
+version = "2.0.5"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/noelpatata/cliphistory"

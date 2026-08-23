@@ -19,3 +19,4 @@ serde_json = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
 wl-clipboard-rs = { workspace = true }
+wayland-client = { version = "0.31", features = ["system"] }

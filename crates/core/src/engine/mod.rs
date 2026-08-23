@@ -2,7 +2,7 @@
 //!
 //! Split by responsibility:
 //! * [`bootstrap`]  – resolve/install the best modules for this machine
-//! * [`supervisor`] – clipboard/paster module lifecycle (spawn/respawn)
+//! * [`supervisor`] – clipboard module lifecycle (spawn/respawn)
 //! * [`handlers`]   – IPC request processing (show/copy/status/doctor)
 
 pub(crate) mod bootstrap;
@@ -16,7 +16,7 @@ use crate::discovery::{detect_session, RealEnv};
 use crate::plugins::ModuleManager;
 use crate::storage::{unix_now, Storage};
 use anyhow::{bail, Context, Result};
-use cliphistory_proto::{ClipboardToHost, HostToClipboard, HostToPaster};
+use cliphistory_proto::{ClipboardToHost, HostToClipboard};
 
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::mpsc::{channel, Sender};
@@ -28,10 +28,8 @@ pub(crate) struct Shared {
     storage: Arc<Storage>,
     mm: Arc<ModuleManager>,
     clipboard_tx: Arc<RwLock<Option<Sender<HostToClipboard>>>>,
-    paster_tx: Arc<RwLock<Option<Sender<HostToPaster>>>>,
     clipboard_id: Arc<RwLock<String>>,
     frontend_id: Arc<RwLock<String>>,
-    paster_id: Arc<RwLock<String>>,
     started_at: u64,
     session: discovery::SessionType,
     app_tx: Sender<AppEvent>,
@@ -39,12 +37,9 @@ pub(crate) struct Shared {
 
 pub(crate) enum AppEvent {
     FromClipboard(ClipboardToHost),
-    FromPaster(PasterToHost),
     Conn(UnixStream),
     ClipboardExited(String),
     RestartClipboard,
-    /// Paster processes respawn lazily; nothing to schedule.
-    PasterDied,
     Shutdown,
 }
 
@@ -88,10 +83,8 @@ fn run_inner(cfg: Config, socket_path: std::path::PathBuf) -> Result<()> {
         storage,
         mm,
         clipboard_tx: Arc::new(RwLock::new(None)),
-        paster_tx: Arc::new(RwLock::new(None)),
         clipboard_id: Arc::new(RwLock::new(String::new())),
         frontend_id: Arc::new(RwLock::new(String::new())),
-        paster_id: Arc::new(RwLock::new(String::new())),
         started_at: unix_now(),
         session: detect_session(&RealEnv),
         app_tx: app_tx.clone(),
@@ -102,7 +95,6 @@ fn run_inner(cfg: Config, socket_path: std::path::PathBuf) -> Result<()> {
     let desired = bootstrap::resolve_desired(&mut shared)?;
     *shared.clipboard_id.write().unwrap() = desired.clipboard.unwrap_or_default();
     *shared.frontend_id.write().unwrap() = desired.frontend.unwrap_or_default();
-    *shared.paster_id.write().unwrap() = desired.paster.unwrap_or_default();
 
     if shared.clipboard_id.read().unwrap().is_empty() {
         log::warn!("no usable clipboard module; run `cliphistory doctor`");
@@ -138,7 +130,7 @@ fn run_inner(cfg: Config, socket_path: std::path::PathBuf) -> Result<()> {
     if !shared.clipboard_id.read().unwrap().is_empty() {
         supervisor::start_clipboard(&shared);
     }
-    // The paster spawns lazily on first paste (supervisor::request_paste).
+    // Auto-paste is handled by crate::paste (external tool injection).
 
     // ----- main loop ----------------------------------------------------------
     while let Ok(event) = app_rx.recv() {
@@ -149,20 +141,9 @@ fn run_inner(cfg: Config, socket_path: std::path::PathBuf) -> Result<()> {
             AppEvent::FromClipboard(frame) => {
                 log::debug!("clipboard module frame: {frame:?}");
             }
-            AppEvent::FromPaster(PasterToHost::Error { message }) => {
-                log::warn!("paster module reported: {message}");
-            }
-            AppEvent::FromPaster(_) => {
-                log::debug!("paster frame");
-            }
             AppEvent::Conn(stream) => handlers::handle_conn(&shared, stream),
             AppEvent::ClipboardExited(id) => supervisor::schedule_restart(&shared, &id),
             AppEvent::RestartClipboard => supervisor::start_clipboard(&shared),
-            AppEvent::PasterDied => {
-                // Lazily respawned on the next paste request.
-                *shared.paster_tx.write().unwrap() = None;
-                log::debug!("paster will respawn on next paste");
-            }
             AppEvent::Shutdown => break,
         }
     }
@@ -170,8 +151,6 @@ fn run_inner(cfg: Config, socket_path: std::path::PathBuf) -> Result<()> {
     shutdown(&shared, &socket_path);
     Ok(())
 }
-
-use cliphistory_proto::PasterToHost;
 
 fn handle_clipboard_event(shared: &Shared, content: cliphistory_proto::Content) {
     match shared.storage.insert(
@@ -202,9 +181,6 @@ fn shutdown(shared: &Shared, socket_path: &std::path::Path) {
     log::info!("shutting down");
     if let Some(tx) = shared.clipboard_tx.read().unwrap().as_ref() {
         tx.send(HostToClipboard::Stop).ok();
-    }
-    if let Some(tx) = shared.paster_tx.read().unwrap().as_ref() {
-        tx.send(HostToPaster::Stop).ok();
     }
     let _ = std::fs::remove_file(socket_path);
 }
