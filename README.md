@@ -128,6 +128,23 @@ auto_update = false
 extra_args = []               # passed to every frontend invocation
 ```
 
+## Images & previews
+
+Copying an image stores the actual PNG bytes (never html markup) plus a
+cached preview — longest edge configurable via `[storage].thumbnail_size`
+(default 256 px) — under `<db dir>/thumbs/<hash>.png`. Image-capable
+frontends declare `features = ["images"]` in their manifest and receive the
+preview path per entry; `frontend-wofi` renders them natively via
+`--allow-images`.
+
+## Auto-paste
+
+With `[general].auto_paste = true` (default), selecting an entry replays
+Ctrl+V into whatever window has focus ~150 ms later. On Wayland this is done
+natively by the `paster-wayland` module through `zwp_virtual_keyboard_v1` —
+**no external tools**. Advanced setups can override with
+`[general].paste_command`. Set `auto_paste = false` for copy-only behavior.
+
 ## Module development guide
 
 A module is any executable answering two commands:
@@ -140,7 +157,7 @@ A module is any executable answering two commands:
 Reader frames (`crates/proto/src/lib.rs`):
 
 ```
-stdout:  {"type":"ready","protocol_version":1}
+stdout:  {"type":"ready","protocol_version":2}
          {"type":"event","content":{"kind":"text","text":"…"}}
          {"type":"event","content":{"kind":"image","mime":"image/png","data":"<base64>","width":null,"height":null}}
          {"type":"pong"}   {"type":"error","message":"…"}
@@ -148,9 +165,11 @@ stdin:   {"type":"ping"}   {"type":"stop"}
          {"type":"set_clipboard","content":{…}}     # write-back capability
 ```
 
-Manifests declare `capabilities` (`read`/`write`) and `requires`
-(external tools probed on PATH during discovery). Modules keep all their own
-constants internally; the core knows nothing about how they work.
+Manifests declare `capabilities` (`read`/`write`), `features` (e.g.
+`images` for frontends that render thumbnails) and `requires` (external
+tools probed on PATH during discovery). Module kinds: `clipboard`,
+`frontend`, `paster`. Modules keep all their own constants internally; the
+core knows nothing about how they work.
 
 Release manifests published by CI look like:
 

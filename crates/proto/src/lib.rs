@@ -13,7 +13,7 @@ use std::borrow::Cow;
 /// * Core refuses to spawn modules reporting a different major value.
 /// * Release manifests carry this value so incompatible artifacts are never
 ///   downloaded in the first place.
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 // ---------------------------------------------------------------------------
 // Module kinds / capabilities
@@ -21,6 +21,7 @@ pub const PROTOCOL_VERSION: u32 = 1;
 
 pub const KIND_CLIPBOARD: &str = "clipboard";
 pub const KIND_FRONTEND: &str = "frontend";
+pub const KIND_PASTER: &str = "paster";
 
 pub const CAP_READ: &str = "read";
 pub const CAP_WRITE: &str = "write";
@@ -215,6 +216,35 @@ pub enum ShowResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Paster <-> host envelopes (NDJSON over stdio)
+// ---------------------------------------------------------------------------
+
+/// Frames sent by a paster module to the core on stdout.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum PasterToHost {
+    Ready {
+        protocol_version: u32,
+    },
+    /// Reply to [`HostToPaster::Ping`].
+    Pong,
+    Error {
+        message: String,
+    },
+}
+
+/// Frames sent by the core to a paster module on stdin.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum HostToPaster {
+    Ping,
+    Stop,
+    /// Replay the paste shortcut into the focused surface now that the
+    /// clipboard module owns the selection.
+    Paste,
+}
+
+// ---------------------------------------------------------------------------
 // Module manifest
 // ---------------------------------------------------------------------------
 
@@ -223,6 +253,7 @@ pub enum ShowResponse {
 pub enum ModuleKind {
     Clipboard,
     Frontend,
+    Paster,
 }
 
 impl ModuleKind {
@@ -230,6 +261,7 @@ impl ModuleKind {
         match self {
             ModuleKind::Clipboard => KIND_CLIPBOARD,
             ModuleKind::Frontend => KIND_FRONTEND,
+            ModuleKind::Paster => KIND_PASTER,
         }
     }
 }

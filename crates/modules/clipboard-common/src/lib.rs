@@ -35,3 +35,13 @@ pub fn next_host_frame(reader: &mut impl BufRead) -> Option<HostToClipboard> {
         },
     }
 }
+
+/// Serialize any wire frame as one NDJSON line on stdout.
+pub fn emit_json<T: ::serde::Serialize>(frame: &T) -> Result<()> {
+    let stdout = std::io::stdout();
+    let mut lock = stdout.lock();
+    serde_json::to_writer(&mut lock, frame)?;
+    lock.write_all(b"\n")?;
+    lock.flush()?;
+    Ok(())
+}

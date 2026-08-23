@@ -61,7 +61,15 @@ impl fmt::Display for SessionType {
 }
 
 impl SessionType {
-    /// Reader module ids to try for this kind of session, best first.
+    /// Paster module ids for this session (native paste injection).
+    pub fn paster_candidates(self) -> &'static [&'static str] {
+        match self {
+            SessionType::Wayland => c::PASTER_CANDIDATES_WAYLAND,
+            _ => c::PASTER_CANDIDATES_X11,
+        }
+    }
+
+    /// Clipboard module ids to try for this kind of session, best first.
     pub fn clipboard_candidates(self) -> &'static [&'static str] {
         match self {
             SessionType::Wayland => c::CLIPBOARD_CANDIDATES_WAYLAND,
@@ -261,6 +269,7 @@ pub struct DiscoveryReport {
     pub tools: Vec<(String, bool)>,
     pub readers: Vec<String>,
     pub frontends: Vec<String>,
+    pub pasters: Vec<String>,
 }
 
 impl fmt::Display for DiscoveryReport {
@@ -280,8 +289,9 @@ impl fmt::Display for DiscoveryReport {
                 if *found { "found" } else { "missing" }
             )?;
         }
-        writeln!(f, "readers:    {}", self.readers.join(" > "))?;
-        write!(f, "frontends:  {}", self.frontends.join(" > "))
+        writeln!(f, "clipboards: {}", self.readers.join(" > "))?;
+        writeln!(f, "frontends:  {}", self.frontends.join(" > "))?;
+        write!(f, "pasters:    {}", self.pasters.join(" > "))
     }
 }
 
@@ -326,6 +336,12 @@ pub fn discover(cfg: &Config, installed: &[InstalledInfo]) -> Result<DiscoveryRe
         cfg.discovery.preferred_frontend.as_deref(),
         ModuleKind::Frontend,
     );
+    let pasters = rank_candidates(
+        session.paster_candidates(),
+        &relevant,
+        cfg.discovery.preferred_paster.as_deref(),
+        ModuleKind::Paster,
+    );
 
     for m in &relevant {
         let (ok, statuses) = probe_requirements(&m.manifest.requires);
@@ -338,6 +354,7 @@ pub fn discover(cfg: &Config, installed: &[InstalledInfo]) -> Result<DiscoveryRe
         distro,
         tools,
         readers,
+        pasters,
         frontends,
     })
 }

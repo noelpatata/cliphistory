@@ -5,26 +5,26 @@
 //! user (`general.paste_command`, e.g. wtype), so this module owns nothing
 //! but timing and error reporting.
 
-use crate::constants as c;
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::Duration;
 
-/// Fire `command` once the clipboard module had `[PASTE_DELAY_MS]` to take
-/// ownership of the selection. Detached: never blocks the daemon.
-/// A missing/blank command is a no-op (feature disabled).
-pub fn schedule_opt(command: Option<String>) {
-    let Some(command) = command.filter(|c| !c.trim().is_empty()) else {
-        return;
-    };
+/// True when a paste override command is configured.
+pub fn has_override(command: &Option<String>) -> bool {
+    command.as_deref().is_some_and(|c| !c.trim().is_empty())
+}
+
+/// Fire an external paste `command` after `delay`. Detached from the caller;
+/// failures are logged as warnings.
+pub fn schedule_command(command: String, delay: Duration) {
     thread::Builder::new()
         .name("auto-paste".into())
-        .spawn(move || run(&command))
+        .spawn(move || run(&command, delay))
         .ok();
 }
 
-fn run(command: &str) {
-    thread::sleep(Duration::from_millis(c::PASTE_DELAY_MS));
+fn run(command: &str, delay: Duration) {
+    thread::sleep(delay);
     match Command::new("sh")
         .arg("-c")
         .arg(command)

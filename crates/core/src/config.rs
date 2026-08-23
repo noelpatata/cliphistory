@@ -21,10 +21,14 @@ pub struct Config {
 pub struct GeneralConfig {
     /// `trace|debug|info|warn|error`. `RUST_LOG` overrides.
     pub log_level: String,
-    /// Run this shell command after a selection is written to the clipboard,
-    /// enabling automatic paste. Example:
-    ///   "wtype -M ctrl -k v -m ctrl"   (pacman -S wtype)
-    /// Empty/unset disables auto-paste.
+    /// Replay the paste shortcut into the focused window after a selection
+    /// is written back. Uses the discovered paster module (native, no
+    /// external tools). Disable to make cliphistory copy-only.
+    pub auto_paste: bool,
+    /// Milliseconds between clipboard ownership and paste injection.
+    pub paste_delay_ms: u64,
+    /// Expert override: run this shell command instead of the paster module
+    /// when set (e.g. a custom wtype invocation).
     pub paste_command: Option<String>,
 }
 
@@ -32,6 +36,8 @@ impl Default for GeneralConfig {
     fn default() -> Self {
         Self {
             log_level: "info".into(),
+            auto_paste: true,
+            paste_delay_ms: c::PASTE_DELAY_MS,
             paste_command: None,
         }
     }
@@ -81,8 +87,10 @@ impl StorageConfig {
 pub struct DiscoveryConfig {
     /// Force a specific module id, e.g. `clipboard-wayland`. Empty = auto.
     pub preferred_clipboard: Option<String>,
-    /// Force a specific frontend id, e.g. `frontend-rofi`. Empty = auto.
+    /// Force a specific frontend id, e.g. `frontend-wofi`. Empty = auto.
     pub preferred_frontend: Option<String>,
+    /// Force a specific paster id, e.g. `paster-wayland`. Empty = auto.
+    pub preferred_paster: Option<String>,
     /// Fail instead of falling back when requirements are unmet.
     pub strict: bool,
 }
@@ -247,7 +255,9 @@ impl Config {
 [general]
 # trace | debug | info | warn | error  (env RUST_LOG overrides)
 log_level = "info"
-# paste_command = "wtype -M ctrl -k v -m ctrl"   # auto-paste after selecting (pacman -S wtype)
+auto_paste = true               # replay ctrl+v into the focused window after selecting
+paste_delay_ms = 150
+# paste_command = ""            # expert override: shell command instead of paster module
 
 [storage]
 # db_path = "~/.local/share/{app}/{db}"
@@ -258,7 +268,8 @@ thumbnail_size = 256            # px, longest edge of image previews; 0 disables
 
 [discovery]
 # preferred_clipboard = "clipboard-wayland"     # omit for automatic detection
-# preferred_frontend = "frontend-rofi"
+# preferred_frontend = "frontend-wofi"
+# preferred_paster = "paster-wayland"
 strict = false                  # error instead of fallback when tools missing
 
 [modules]
