@@ -66,8 +66,6 @@ pub struct DaemonStatus {
     pub clipboard_module: String,
     /// Active frontend module (renders the picker).
     pub frontend_module: String,
-    /// Active paster module, if the platform supports native paste injection.
-    pub paster_module: String,
     /// Whether selections are automatically pasted into the focused window.
     pub auto_paste: bool,
     pub entry_count: i64,

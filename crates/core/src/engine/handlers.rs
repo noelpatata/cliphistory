@@ -121,8 +121,7 @@ fn status(st: &Shared) -> IpcResponse {
         session: st.session.to_string(),
         clipboard_module: st.clipboard_id.read().unwrap().clone(),
         frontend_module: st.frontend_id.read().unwrap().clone(),
-        paster_module: st.paster_id.read().unwrap().clone(),
-        auto_paste: st.cfg.general.auto_paste,
+        auto_paste: crate::paste::is_available() && st.cfg.general.auto_paste,
         entry_count: st.storage.count().unwrap_or(-1),
         db_path: st.storage.db_path().display().to_string(),
         db_size_bytes: st.storage.db_size_bytes(),
@@ -138,7 +137,12 @@ fn copy_entry(st: &Shared, id: i64) -> IpcResponse {
     };
     send_to_clipboard(st, &content);
     let _ = st.storage.mark_used(id);
-    super::supervisor::request_paste(st);
+    let delay = st.cfg.general.paste_delay_ms;
+    if st.cfg.general.auto_paste {
+        if let Some(cmd) = crate::paste::find_tool() {
+            crate::paste::schedule(cmd.to_string(), delay);
+        }
+    }
     IpcResponse::ok(format!("copied {}", content.preview()))
 }
 
@@ -242,20 +246,21 @@ fn doctor_text(st: &Shared) -> String {
         st.started_at
     ));
     lines.push(format!(
-        "active:     clipboard={} frontend={} paster={}",
+        "active:     clipboard={} frontend={}",
         st.clipboard_id.read().unwrap(),
-        st.frontend_id.read().unwrap(),
-        st.paster_id.read().unwrap()
+        st.frontend_id.read().unwrap()
     ));
+    let paste_tool = crate::paste::find_tool();
     lines.push(format!(
         "auto-paste: {}{}",
-        st.cfg.general.auto_paste,
-        st.cfg
-            .general
-            .paste_command
-            .as_deref()
-            .map(|c| format!(" (override: {c:.60})"))
-            .unwrap_or_default()
+        if st.cfg.general.auto_paste && paste_tool.is_some() {
+            "on"
+        } else {
+            "off"
+        },
+        paste_tool
+            .map(|t| format!(" ({t})"))
+            .unwrap_or_else(|| " (no tool found; install wtype)".into()),
     ));
     match st.storage.count() {
         Ok(n) => lines.push(format!(

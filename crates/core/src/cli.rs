@@ -160,12 +160,6 @@ fn render(resp: IpcResponse) -> Result<i32> {
             writeln!(out, "session:   {}", s.session)?;
             writeln!(out, "clipboard: {}", s.clipboard_module)?;
             writeln!(out, "frontend:  {}", s.frontend_module)?;
-            writeln!(
-                out,
-                "paster:    {} (auto-paste {})",
-                s.paster_module,
-                if s.auto_paste { "on" } else { "off" }
-            )?;
             writeln!(out, "entries:   {}", s.entry_count)?;
             writeln!(out, "db:        {} ({} bytes)", s.db_path, s.db_size_bytes)?;
             Ok(0)
