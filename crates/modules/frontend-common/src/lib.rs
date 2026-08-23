@@ -11,7 +11,6 @@ pub mod render;
 
 use anyhow::{Context, Result};
 use cliphistory_proto::{ModuleManifest, ShowRequest, ShowResponse};
-use render::Selection;
 use std::io::{BufRead, BufReader, Read};
 use std::process::{Command, Stdio};
 
@@ -36,6 +35,7 @@ pub fn run_menu(
     if request.entries.is_empty() {
         return Ok(ShowResponse::Dismissed);
     }
+    let (lines, selections) = render::SelectionMap::build(&request.entries, render_images);
 
     let mut child = Command::new(bin)
         .args(fixed_args)
@@ -49,9 +49,8 @@ pub fn run_menu(
     {
         use std::io::Write as _;
         let mut stdin = child.stdin.take().expect("frontend stdin");
-        for entry in &request.entries {
-            let line = render::display_line(entry, render_images).0;
-            writeln!(stdin, "{line}")?;
+        for line in &lines {
+            writeln!(stdin, "{}", line.0)?;
         }
         stdin.flush()?;
         drop(stdin); // EOF lets the menu render
@@ -68,11 +67,11 @@ pub fn run_menu(
         return Ok(ShowResponse::Dismissed);
     }
 
-    match render::parse_selection(&selected) {
-        Some(Selection::Id(id)) => Ok(ShowResponse::Selected { id }),
-        // Frontends do not emit delete/clear yet; treat unknown as dismissed
-        // so a malformed echo can never destroy history.
-        _ => Ok(ShowResponse::Dismissed),
+    match selections.resolve(&selected) {
+        Some(id) => Ok(ShowResponse::Selected { id }),
+        // Unknown echo (menu mangled the line): dismiss rather than risk
+        // acting on the wrong entry.
+        None => Ok(ShowResponse::Dismissed),
     }
 }
 
