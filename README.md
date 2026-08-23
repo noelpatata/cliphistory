@@ -140,10 +140,21 @@ preview path per entry; `frontend-wofi` renders them natively via
 ## Auto-paste
 
 With `[general].auto_paste = true` (default), selecting an entry replays
-Ctrl+V into whatever window has focus ~150 ms later. On Wayland this is done
-natively by the `paster-wayland` module through `zwp_virtual_keyboard_v1` —
-**no external tools**. Advanced setups can override with
-`[general].paste_command`. Set `auto_paste = false` for copy-only behavior.
+Ctrl+V into whatever window has focus ~150 ms later. Injection is attempted
+through, in order:
+
+1. `[general].paste_command` — expert override, run verbatim via `sh`
+2. a native paster module:
+   - `paster-uinput` — kernel-level virtual keyboard; works on Wayland,
+     X11 and TTY. Needs write access to `/dev/uinput` (logind grants it to
+     the active seat) and the udev rule from `dist/udev/` so the compositor
+     may read the injected device.
+   - `paster-wayland` — `zwp_virtual_keyboard_v1`, no special permissions.
+3. an external tool on PATH for the detected session (`wtype`, `ydotool`,
+   `dotool`, `xdotool`)
+
+Set `auto_paste = false` for copy-only behavior. Run
+`cliphistory doctor` to see which mechanism is active and why.
 
 ## Module development guide
 

@@ -17,12 +17,13 @@ use cliphistory_proto::{ModuleKind, ModuleManifest, PROTOCOL_VERSION};
 pub(crate) struct DesiredModules {
     pub clipboard: Option<String>,
     pub frontend: Option<String>,
+    pub paster: Option<String>,
 }
 
 fn candidate_lists(
     cfg: &Config,
     session: discovery::SessionType,
-) -> [(ModuleKind, &'static [&'static str], Option<&String>); 2] {
+) -> [(ModuleKind, &'static [&'static str], Option<&String>); 3] {
     [
         (
             ModuleKind::Clipboard,
@@ -33,6 +34,11 @@ fn candidate_lists(
             ModuleKind::Frontend,
             c::FRONTEND_CANDIDATES,
             cfg.discovery.preferred_frontend.as_ref(),
+        ),
+        (
+            ModuleKind::Paster,
+            session.paster_candidates(),
+            cfg.discovery.preferred_paster.as_ref(),
         ),
     ]
 }
@@ -99,7 +105,7 @@ fn record(kind: ModuleKind, desired: &mut DesiredModules, id: String) {
     match kind {
         ModuleKind::Clipboard => desired.clipboard = Some(id),
         ModuleKind::Frontend => desired.frontend = Some(id),
-        ModuleKind::Paster => {}
+        ModuleKind::Paster => desired.paster = Some(id),
     }
 }
 

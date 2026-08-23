@@ -121,7 +121,7 @@ fn status(st: &Shared) -> IpcResponse {
         session: st.session.to_string(),
         clipboard_module: st.clipboard_id.read().unwrap().clone(),
         frontend_module: st.frontend_id.read().unwrap().clone(),
-        auto_paste: crate::paste::is_available() && st.cfg.general.auto_paste,
+        auto_paste: auto_paste_possible(st),
         entry_count: st.storage.count().unwrap_or(-1),
         db_path: st.storage.db_path().display().to_string(),
         db_size_bytes: st.storage.db_size_bytes(),
@@ -137,13 +137,56 @@ fn copy_entry(st: &Shared, id: i64) -> IpcResponse {
     };
     send_to_clipboard(st, &content);
     let _ = st.storage.mark_used(id);
-    let delay = st.cfg.general.paste_delay_ms;
-    if st.cfg.general.auto_paste {
-        if let Some(cmd) = crate::paste::find_tool() {
-            crate::paste::schedule(cmd.to_string(), delay);
-        }
-    }
+    trigger_auto_paste(st);
     IpcResponse::ok(format!("copied {}", content.preview()))
+}
+
+/// Replay the paste shortcut into the focused window, honouring:
+/// `paste_command` override > native paster module > external tool.
+fn trigger_auto_paste(st: &Shared) {
+    if !st.cfg.general.auto_paste {
+        return;
+    }
+    let delay = st.cfg.general.paste_delay_ms;
+
+    if let Some(cmd) = st
+        .cfg
+        .general
+        .paste_command
+        .as_deref()
+        .map(str::trim)
+        .filter(|c| !c.is_empty())
+    {
+        crate::paste::schedule_command(cmd.to_string(), delay);
+        return;
+    }
+
+    if let Some(tx) = st.paster_tx.read().unwrap().clone() {
+        crate::paste::schedule_module(tx, delay);
+        return;
+    }
+
+    match crate::paste::find_tool(st.session) {
+        Some(cmd) => crate::paste::schedule_command(cmd.to_string(), delay),
+        None => log::warn!("auto-paste enabled but no paster module or injection tool found"),
+    }
+}
+
+/// True when auto-paste could fire right now.
+fn auto_paste_possible(st: &Shared) -> bool {
+    if !st.cfg.general.auto_paste {
+        return false;
+    }
+    let cmd_override = st
+        .cfg
+        .general
+        .paste_command
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|c| !c.is_empty());
+    cmd_override || st.paster_tx.read().unwrap().is_some() || {
+        crate::paste::find_tool(st.session).is_some()
+    }
 }
 
 fn send_to_clipboard(st: &Shared, content: &Content) {
@@ -250,17 +293,37 @@ fn doctor_text(st: &Shared) -> String {
         st.clipboard_id.read().unwrap(),
         st.frontend_id.read().unwrap()
     ));
-    let paste_tool = crate::paste::find_tool();
+    let paster_running = !st.paster_id.read().unwrap().is_empty()
+        && st.paster_tx.read().unwrap().is_some();
+    let paste_tool = crate::paste::find_tool(st.session);
+    let mechanism = if st
+        .cfg
+        .general
+        .paste_command
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|c| !c.is_empty())
+    {
+        "custom command".into()
+    } else if paster_running {
+        format!("native module ({})", st.paster_id.read().unwrap())
+    } else {
+        paste_tool
+            .map(|t| format!("external tool ({t})"))
+            .unwrap_or_else(|| "none available".into())
+    };
     lines.push(format!(
         "auto-paste: {}{}",
-        if st.cfg.general.auto_paste && paste_tool.is_some() {
+        if st.cfg.general.auto_paste && mechanism != "none available" {
             "on"
         } else {
             "off"
         },
-        paste_tool
-            .map(|t| format!(" ({t})"))
-            .unwrap_or_else(|| " (no tool found; install wtype)".into()),
+        if st.cfg.general.auto_paste {
+            format!(" [{mechanism}]")
+        } else {
+            String::new()
+        },
     ));
     match st.storage.count() {
         Ok(n) => lines.push(format!(
