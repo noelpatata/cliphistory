@@ -51,8 +51,15 @@ pub const DEFAULT_THUMBNAIL_SIZE: u32 = 256;
 // ---------------------------------------------------------------------------
 
 /// Grace period so the clipboard module owns the selection before the
-/// target application reads it.
+/// target application reads it (config `general.paste_delay_ms`).
 pub const PASTE_DELAY_MS: u64 = 150;
+
+// ---------------------------------------------------------------------------
+// Paster module discovery priorities
+// ---------------------------------------------------------------------------
+
+pub const PASTER_CANDIDATES_WAYLAND: &[&str] = &["paster-wayland"];
+pub const PASTER_CANDIDATES_X11: &[&str] = &[];
 /// Example wired for `wtype` (pacman -S wtype).
 pub const PASTE_COMMAND_EXAMPLE: &str = "wtype -M ctrl -k v -m ctrl";
 

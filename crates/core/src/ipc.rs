@@ -62,8 +62,14 @@ pub struct DaemonStatus {
     pub pid: u32,
     pub started_at: u64,
     pub session: String,
-    pub reader: String,
-    pub frontend: String,
+    /// Active clipboard module (reads and writes the system clipboard).
+    pub clipboard_module: String,
+    /// Active frontend module (renders the picker).
+    pub frontend_module: String,
+    /// Active paster module, if the platform supports native paste injection.
+    pub paster_module: String,
+    /// Whether selections are automatically pasted into the focused window.
+    pub auto_paste: bool,
     pub entry_count: i64,
     pub db_path: String,
     pub db_size_bytes: u64,

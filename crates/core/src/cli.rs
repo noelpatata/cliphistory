@@ -158,8 +158,14 @@ fn render(resp: IpcResponse) -> Result<i32> {
         IpcResponse::Status(s) => {
             writeln!(out, "pid:       {}", s.pid)?;
             writeln!(out, "session:   {}", s.session)?;
-            writeln!(out, "reader:    {}", s.reader)?;
-            writeln!(out, "frontend:  {}", s.frontend)?;
+            writeln!(out, "clipboard: {}", s.clipboard_module)?;
+            writeln!(out, "frontend:  {}", s.frontend_module)?;
+            writeln!(
+                out,
+                "paster:    {} (auto-paste {})",
+                s.paster_module,
+                if s.auto_paste { "on" } else { "off" }
+            )?;
             writeln!(out, "entries:   {}", s.entry_count)?;
             writeln!(out, "db:        {} ({} bytes)", s.db_path, s.db_size_bytes)?;
             Ok(0)
@@ -194,7 +200,7 @@ fn discover_local(cfg: &Config) -> Result<()> {
     let mm = ModuleManager::new(cfg.modules.clone());
     let installed = mm.list_installed()?;
     println!("modules installed at: {}", mm.install_root().display());
-    let infos = crate::engine::to_installed_infos(&installed);
+    let infos = crate::engine::bootstrap::to_installed_infos(&installed);
     let report = discovery::discover(cfg, &infos)?;
     println!("{report}");
 
@@ -227,6 +233,7 @@ fn config_cmd(cmd: ConfigCommand, _cfg: &Config) -> Result<()> {
         ConfigCommand::Init => {
             let path = config::config_path();
             Config::write_template(&path)?;
+            let _ = std::io::Write::flush(&mut std::io::stdout());
             println!("wrote {}", path.display());
             Ok(())
         }
@@ -324,7 +331,7 @@ fn resolve_target_ids(mm: &ModuleManager, cfg: &Config, ids: Vec<String>) -> Res
     }
     // Default: whatever discovery would pick for this machine.
     let installed = mm.list_installed()?;
-    let infos = crate::engine::to_installed_infos(&installed);
+    let infos = crate::engine::bootstrap::to_installed_infos(&installed);
     let report = discovery::discover(cfg, &infos)?;
     let mut targets: Vec<String> = Vec::new();
     if let Some(r) = report.readers.first() {
@@ -333,11 +340,15 @@ fn resolve_target_ids(mm: &ModuleManager, cfg: &Config, ids: Vec<String>) -> Res
     if let Some(f) = report.frontends.first() {
         targets.push(f.clone());
     }
+    if let Some(p) = report.pasters.first() {
+        targets.push(p.clone());
+    }
     if targets.is_empty() {
         // Nothing installed yet -> offer every known candidate.
         let session = discovery::detect_session(&discovery::RealEnv);
         targets.extend(session.clipboard_candidates().iter().map(|s| s.to_string()));
         targets.extend(c::FRONTEND_CANDIDATES.iter().map(|s| s.to_string()));
+        targets.extend(session.paster_candidates().iter().map(|s| s.to_string()));
     }
     Ok(targets)
 }
