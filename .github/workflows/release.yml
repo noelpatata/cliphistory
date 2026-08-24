@@ -55,13 +55,19 @@ jobs:
       - name: Stage artifacts
         run: |
           mkdir -p out
-          cd "target/${{ matrix.target }}/release"
-          for bin in cliphistory cliphistory-clipboard-* cliphistory-frontend-* cliphistory-paster-*; do
-            # -f: exists; -x: executables only (skips rustc's *.d dep-info files)
-            [ -f "$bin" ] && [ -x "$bin" ] && cp "$bin" \
-              "../../../out/${{ matrix.target }}__${bin}"
-          done
-          cd -
+          cp cliphistory "../../../out/${{ matrix.target }}__cliphistory"
+          # Module ids are declared once in release-modules.txt; the core
+          # binary is staged separately above.
+          while IFS= read -r id || [ -n "$id" ]; do
+            case "$id" in ''|\#*) continue ;; esac
+            bin="cliphistory-$id"
+            if [ -f "$bin" ] && [ -x "$bin" ]; then
+              cp "$bin" "../../../out/${{ matrix.target }}__$bin"
+            else
+              echo "::error::release-modules.txt lists '$id' but $bin was not built"
+              exit 1
+            fi
+          done < "$GITHUB_WORKSPACE/release-modules.txt"
           ls -la out
 
       - name: Upload artifact
@@ -105,13 +111,12 @@ jobs:
         if: steps.ver.outputs.exists == 'no'
         run: |
           mkdir -p meta
-          for bin in target/release/cliphistory-clipboard-* target/release/cliphistory-frontend-* target/release/cliphistory-paster-*; do
-            # executables only — skip *.d dep-info files rustc leaves behind
-            [ -f "$bin" ] && [ -x "$bin" ] || continue
-            base="$(basename "$bin")"
-            "$bin" --manifest > "meta/${base}.json"
-            cat "meta/${base}.json"
-          done
+          while IFS= read -r id || [ -n "$id" ]; do
+            case "$id" in ''|\#*) continue ;; esac
+            bin="target/release/cliphistory-$id"
+            "$bin" --manifest > "meta/cliphistory-$id.json"
+            cat "meta/cliphistory-$id.json"
+          done < release-modules.txt
 
       - name: Download all artifacts
         if: steps.ver.outputs.exists == 'no'

@@ -1,0 +1,11 @@
+# Modules shipped with every cliphistory release, one id per line.
+# The release pipeline builds `cliphistory-<id>` for each entry, extracts
+# its `--manifest` metadata and lists it in manifest.json.
+#
+# To publish a new module: add its crate under crates/modules/, then add
+# its id here. Lines starting with '#' are comments.
+clipboard-wayland
+clipboard-x11
+frontend-generic
+paster-uinput
+paster-wayland

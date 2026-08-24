@@ -57,6 +57,9 @@ pub struct StorageConfig {
     pub max_item_size: i64,
     /// Entries older than this are pruned; 0 disables age pruning.
     pub max_age_days: i64,
+    /// Hard ceiling for summed entry payloads (bytes); pruning evicts the
+    /// oldest unpinned entries until the total fits. 0 = unlimited.
+    pub max_total_bytes: i64,
     /// Longest edge of cached image previews, in pixels. 0 disables
     /// thumbnail generation entirely.
     pub thumbnail_size: u32,
@@ -69,6 +72,7 @@ impl Default for StorageConfig {
             max_entries: c::DEFAULT_MAX_ENTRIES,
             max_item_size: c::DEFAULT_MAX_ITEM_SIZE_BYTES,
             max_age_days: c::DEFAULT_MAX_AGE_DAYS,
+            max_total_bytes: c::DEFAULT_MAX_TOTAL_BYTES,
             thumbnail_size: c::DEFAULT_THUMBNAIL_SIZE,
         }
     }
@@ -90,7 +94,7 @@ impl StorageConfig {
 pub struct DiscoveryConfig {
     /// Force a specific module id, e.g. `clipboard-wayland`. Empty = auto.
     pub preferred_clipboard: Option<String>,
-    /// Force a specific frontend id, e.g. `frontend-wofi`. Empty = auto.
+    /// Force a specific frontend id, e.g. `frontend-generic`. Empty = auto.
     pub preferred_frontend: Option<String>,
     /// Force a specific paster id, e.g. `paster-wayland`. Empty = auto.
     pub preferred_paster: Option<String>,

@@ -54,7 +54,7 @@ fn trigger_auto_paste(st: &Shared) {
     }
     let delay = st.cfg.general.paste_delay_ms;
 
-    if let Some(cmd) = paste_command_override(st) {
+    if let Some(cmd) = st.paste_command_override() {
         paste::schedule_command(cmd.to_string(), delay);
         return;
     }
@@ -70,21 +70,12 @@ fn trigger_auto_paste(st: &Shared) {
     }
 }
 
-fn paste_command_override(st: &Shared) -> Option<&str> {
-    st.cfg
-        .general
-        .paste_command
-        .as_deref()
-        .map(str::trim)
-        .filter(|c| !c.is_empty())
-}
-
 /// True when auto-paste could fire right now.
 fn auto_paste_possible(st: &Shared) -> bool {
     if !st.cfg.general.auto_paste {
         return false;
     }
-    paste_command_override(st).is_some()
+    st.paste_command_override().is_some()
         || st.paster_tx.read().unwrap().is_some()
         || paste::find_tool(st.session).is_some()
 }

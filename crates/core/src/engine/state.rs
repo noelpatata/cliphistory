@@ -27,12 +27,22 @@ pub(crate) struct Shared {
     pub(crate) app_tx: Sender<AppEvent>,
 }
 
+impl Shared {
+    /// Trimmed `general.paste_command` override, when set.
+    pub(crate) fn paste_command_override(&self) -> Option<&str> {
+        self.cfg
+            .general
+            .paste_command
+            .as_deref()
+            .map(str::trim)
+            .filter(|c| !c.is_empty())
+    }
+}
+
 /// Events feeding the daemon's main loop.
 pub(crate) enum AppEvent {
     FromClipboard(ClipboardToHost),
     FromPaster(PasterToHost),
-    /// Consumed inside slot forwarding (e.g. paster Ready logging).
-    Noop,
     Conn(UnixStream),
     ClipboardExited(String),
     PasterExited(String),

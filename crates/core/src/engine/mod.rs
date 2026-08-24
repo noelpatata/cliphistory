@@ -57,7 +57,11 @@ pub fn run(cfg: Config) -> Result<()> {
 fn run_inner(cfg: Config, socket_path: std::path::PathBuf) -> Result<()> {
     let db_path = cfg.storage.resolved_db_path();
     let storage = Arc::new(Storage::open(&db_path)?);
-    storage.prune(cfg.storage.max_entries, cfg.storage.max_age_days)?;
+    storage.prune_with_budget(
+        cfg.storage.max_entries,
+        cfg.storage.max_age_days,
+        Some(cfg.storage.max_total_bytes),
+    )?;
 
     let mm = Arc::new(ModuleManager::new(cfg.modules.clone()));
     let (app_tx, app_rx) = channel();
@@ -136,7 +140,6 @@ fn run_inner(cfg: Config, socket_path: std::path::PathBuf) -> Result<()> {
             AppEvent::FromPaster(PasterToHost::Error { message }) => {
                 log::warn!("paster: {message}");
             }
-            AppEvent::Noop => {}
             AppEvent::Conn(stream) => dispatch::handle_conn(&shared, stream),
             AppEvent::ClipboardExited(id) => supervisor::schedule_restart(&shared, &id),
             AppEvent::RestartClipboard => supervisor::start_clipboard(&shared),
@@ -160,9 +163,10 @@ fn handle_clipboard_event(shared: &Shared, content: cliphistory_proto::Content) 
     ) {
         Ok(crate::storage::InsertOutcome::Inserted(id)) => {
             log::info!("[{id}] stored {}", content.preview());
-            let _ = shared.storage.prune(
+            let _ = shared.storage.prune_with_budget(
                 shared.cfg.storage.max_entries,
                 shared.cfg.storage.max_age_days,
+                Some(shared.cfg.storage.max_total_bytes),
             );
         }
         Ok(crate::storage::InsertOutcome::Duplicate(id)) => {

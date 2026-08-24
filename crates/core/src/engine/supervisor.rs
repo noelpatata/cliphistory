@@ -29,8 +29,9 @@ pub(crate) trait Slot: 'static {
     fn exited(id: String) -> AppEvent;
     /// AppEvent that re-runs `start`.
     fn restart() -> AppEvent;
-    /// Map a stdout frame onto the app event loop.
-    fn frame_event(frame: <Self::Frames as FrameSpec>::FromModule) -> AppEvent;
+    /// Map a stdout frame onto the app event loop. `None` = fully handled
+    /// here (logged/consumed), nothing forwarded.
+    fn frame_event(frame: <Self::Frames as FrameSpec>::FromModule) -> Option<AppEvent>;
     /// Per-kind restart counter so crash loops are tracked independently.
     fn restart_counter() -> &'static AtomicU32;
 }
@@ -53,8 +54,8 @@ impl Slot for ClipboardSlot {
     fn restart() -> AppEvent {
         AppEvent::RestartClipboard
     }
-    fn frame_event(frame: ClipboardToHost) -> AppEvent {
-        AppEvent::FromClipboard(frame)
+    fn frame_event(frame: ClipboardToHost) -> Option<AppEvent> {
+        Some(AppEvent::FromClipboard(frame))
     }
     fn restart_counter() -> &'static AtomicU32 {
         static C: AtomicU32 = AtomicU32::new(0);
@@ -80,13 +81,13 @@ impl Slot for PasterSlot {
     fn restart() -> AppEvent {
         AppEvent::RestartPaster
     }
-    fn frame_event(frame: PasterToHost) -> AppEvent {
+    fn frame_event(frame: PasterToHost) -> Option<AppEvent> {
         match frame {
             PasterToHost::Ready { protocol_version } => {
                 log::info!("paster module ready (protocol v{protocol_version})");
-                AppEvent::Noop
+                None // consumed: logged above
             }
-            other => AppEvent::FromPaster(other),
+            other => Some(AppEvent::FromPaster(other)),
         }
     }
     fn restart_counter() -> &'static AtomicU32 {
@@ -173,8 +174,10 @@ fn forward_output<S: Slot>(child: &mut Child, app_tx: &Sender<AppEvent>) {
         .name(format!("{}-events", S::NAME))
         .spawn(move || {
             for frame in rx {
-                if app_tx.send(S::frame_event(frame)).is_err() {
-                    break;
+                if let Some(ev) = S::frame_event(frame) {
+                    if app_tx.send(ev).is_err() {
+                        break;
+                    }
                 }
             }
         })

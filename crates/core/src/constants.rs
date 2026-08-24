@@ -45,6 +45,10 @@ pub const DEFAULT_MAX_ITEM_SIZE_BYTES: i64 = 5 * 1024 * 1024;
 pub const DEFAULT_MAX_AGE_DAYS: i64 = 0;
 /// Longest edge of generated image previews; 0 disables thumbnails.
 pub const DEFAULT_THUMBNAIL_SIZE: u32 = 256;
+/// Hard ceiling on summed entry payloads; pruning evicts oldest unpinned
+/// entries until the total fits. This is what actually bounds disk usage —
+/// an entry-count cap alone cannot (N x max_item_size grows unbounded).
+pub const DEFAULT_MAX_TOTAL_BYTES: i64 = 256 * 1024 * 1024; // 256 MiB
 
 // ---------------------------------------------------------------------------
 // Auto-paste (runs after a selection is written back to the clipboard)
@@ -82,7 +86,7 @@ pub const CHANNEL_STABLE: &str = "stable";
 
 pub const CLIPBOARD_CANDIDATES_WAYLAND: &[&str] = &["clipboard-wayland"];
 pub const CLIPBOARD_CANDIDATES_X11: &[&str] = &["clipboard-x11"];
-pub const FRONTEND_CANDIDATES: &[&str] = &["frontend-rofi", "frontend-wofi", "frontend-dmenu"];
+pub const FRONTEND_CANDIDATES: &[&str] = &["frontend-generic"];
 
 // ---------------------------------------------------------------------------
 // Engine tuning

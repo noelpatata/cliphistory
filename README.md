@@ -111,7 +111,7 @@ max_age_days = 0              # 0 = keep forever
 
 [discovery]
 # preferred_clipboard = "clipboard-wayland"
-# preferred_frontend = "frontend-rofi"
+# preferred_frontend = "frontend-generic"
 strict = false                # fail instead of falling back when tools miss
 
 [modules]
@@ -134,7 +134,7 @@ Copying an image stores the actual PNG bytes (never html markup) plus a
 cached preview — longest edge configurable via `[storage].thumbnail_size`
 (default 256 px) — under `<db dir>/thumbs/<hash>.png`. Image-capable
 frontends declare `features = ["images"]` in their manifest and receive the
-preview path per entry; `frontend-wofi` renders them natively via
+preview path per entry; image-capable launchers (wofi) render them natively via
 `--allow-images`.
 
 ## Auto-paste
@@ -235,11 +235,11 @@ C code is SQLite, bundled via the `rusqlite` `bundled` feature.
 cargo build                        # fast debug build (what you iterate with)
 cargo build --release              # optimised binaries in target/release/
 cargo build -p cliphistory-core       # just the daemon/CLI
-cargo build -p cliphistory-clipboard-wayland -p cliphistory-frontend-rofi   # select modules
+cargo build -p cliphistory-clipboard-wayland -p cliphistory-frontend-generic  # select modules
 ```
 
 Binaries produced: `cliphistory` plus one per module
-(`cliphistory-clipboard-wayland`, `cliphistory-clipboard-x11`, `cliphistory-frontend-{rofi,wofi,dmenu}`).
+(`cliphistory-clipboard-wayland`, `cliphistory-clipboard-x11`, `cliphistory-paster-uinput`, `cliphistory-frontend-generic`).
 
 ### Tests
 
@@ -296,7 +296,7 @@ startup. You can also exercise any module binary directly:
 
 ```sh
 ./target/debug/cliphistory-clipboard-wayland --manifest      # self-description JSON
-./target/debug/cliphistory-frontend-rofi run <<< '{"entries":[{"id":1,"kind":"text","mime":"text/plain","preview":"hello","size_bytes":5,"created_at":0,"use_count":0,"pinned":false}]}'
+./target/debug/cliphistory-frontend-generic run <<< '{"entries":[{"id":1,"kind":"text","mime":"text/plain","preview":"hello","size_bytes":5,"created_at":0,"use_count":0,"pinned":false}]}'
 ```
 
 ### Before opening a PR
@@ -316,13 +316,15 @@ cargo build --workspace
 crates/
 ├── proto/                    # wire types + PROTOCOL_VERSION (the contract)
 ├── core/                     # `cliphistory` binary + library
-│   └── src/{constants,config,storage,discovery,plugins,engine,ipc,cli}.rs
+│   └── src/{constants,config/,storage/,discovery/,plugins/,engine/,ipc,paste,cli/}.rs
 └── modules/
-    ├── module-common/           # shared NDJSON/chord plumbing for modules
-    ├── clipboard-wayland/       # wl-clipboard-rs, no external deps
-    ├── clipboard-x11/           # xclip polling
-    ├── frontend-common/      # shared menu plumbing
-    ├── frontend-rofi/ wofi/ dmenu/
+    ├── module-common/        # shared NDJSON/chord/reader scaffolding
+    ├── clipboard-wayland/    # wl-clipboard-rs, no external deps
+    ├── clipboard-x11/        # xclip polling
+    ├── paster-uinput/        # kernel-level chord injection
+    ├── paster-wayland/       # zwp_virtual_keyboard injection
+    ├── frontend-common/      # menu plumbing + indexed line rendering
+    └── frontend-generic/     # built-in egui GUI window (primary); launcher/tty fallbacks
 ```
 
 ## Branching & releases
@@ -340,7 +342,7 @@ feature/* ──▶ dev ──▶ release/vX.Y ──▶ main   (merge = publish
 
 ## Roadmap ideas
 
-- GTK/TUI frontend modules, image thumbnails in rofi themes
+- GTK/TUI frontend modules, image thumbnails in rofi icon mode
 - primary-selection support, entry expiry policies per MIME type
 - PKGBUILD / packaging for common distros
 

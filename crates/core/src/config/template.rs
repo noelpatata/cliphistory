@@ -36,11 +36,12 @@ paste_delay_ms = 150
 max_entries = {max_entries}
 max_item_size = {max_item}      # bytes; larger payloads are ignored
 max_age_days = 0                # 0 = keep forever
+max_total_bytes = {max_total}   # hard payload budget; 0 = unlimited
 thumbnail_size = 256            # px, longest edge of image previews; 0 disables
 
 [discovery]
 # preferred_clipboard = "clipboard-wayland"     # omit for automatic detection
-# preferred_frontend = "frontend-wofi"
+# preferred_frontend = "frontend-generic"
 # preferred_paster = "paster-wayland"
 strict = false                  # error instead of fallback when tools missing
 
@@ -64,6 +65,7 @@ extra_args = []                 # e.g. ["-theme", "~/.config/rofi/cliphistory.ra
             channel = c::CHANNEL_STABLE,
             max_entries = c::DEFAULT_MAX_ENTRIES,
             max_item = c::DEFAULT_MAX_ITEM_SIZE_BYTES,
+            max_total = c::DEFAULT_MAX_TOTAL_BYTES,
         )
     }
 }

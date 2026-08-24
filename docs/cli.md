@@ -95,7 +95,7 @@ Quick health summary of the running daemon:
 pid:       51234
 session:   wayland
 clipboard module:    clipboard-wayland
-frontend:  frontend-rofi
+frontend:  frontend-generic
 entries:   317
 db:        /home/you/.local/share/cliphistory/history.db (204800 bytes)
 ```
@@ -132,15 +132,22 @@ Module management without editing config files:
 ```sh
 cliphistory modules list                          # installed versions + requirements
 cliphistory modules install                       # whatever discovery wants
-cliphistory modules install clipboard-x11 frontend-wofi paster-uinput
-cliphistory modules install --force frontend-rofi # reinstall even if current
+cliphistory modules install clipboard-x11 frontend-generic paster-uinput
+cliphistory modules install --force frontend-generic # reinstall even if current
 cliphistory modules update                        # chase channel/pins for everything installed
-cliphistory modules remove frontend-dmenu
+cliphistory modules remove frontend-generic
 ```
 
 Module kinds: `clipboard-*` (read the system clipboard), `frontend-*`
 (render the picker), `paster-*` (replay the paste chord — `paster-uinput`
 works everywhere, `paster-wayland` uses the Wayland virtual keyboard).
+
+`frontend-generic` is the only frontend you need. Primary picker is its
+**built-in egui window** (X11 + Wayland, nothing to install): click an
+entry, or type in the filter box and use ↑/↓ + Enter; Esc dismisses.
+Fallbacks when no display is available: dmenu-style launchers
+(rofi/wofi/bemenu/fuzzel/tofi/dmenu; `CLIPHISTORY_MENU_BIN` overrides),
+then a numbered picker on your terminal.
 
 Notes:
 

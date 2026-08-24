@@ -114,3 +114,125 @@ fn quick_dispatch(st: &Shared, req: IpcRequest) -> IpcResponse {
         R::Show | R::ModulesInstall { .. } => unreachable!(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+    use crate::engine::state::{AppEvent, Shared};
+    use crate::storage::{InsertOpts, Storage};
+    use cliphistory_proto::Content;
+    use std::sync::{mpsc, RwLock};
+
+    /// A Shared wired to an in-memory DB and a no-op app channel: enough to
+    /// exercise the synchronous IPC surface without a compositor.
+    fn test_shared() -> Shared {
+        let (app_tx, _rx) = mpsc::channel::<AppEvent>();
+        let cfg = Config::default();
+        Shared {
+            cfg,
+            storage: std::sync::Arc::new(Storage::open_in_memory().unwrap()),
+            mm: std::sync::Arc::new(crate::plugins::ModuleManager::new(Default::default())),
+            clipboard_tx: std::sync::Arc::new(RwLock::new(None)),
+            clipboard_id: std::sync::Arc::new(RwLock::new(String::new())),
+            paster_tx: std::sync::Arc::new(RwLock::new(None)),
+            paster_id: std::sync::Arc::new(RwLock::new(String::new())),
+            frontend_id: std::sync::Arc::new(RwLock::new(String::new())),
+            started_at: 0,
+            session: crate::discovery::SessionType::Tty,
+            app_tx,
+        }
+    }
+
+    fn seed_entry(st: &Shared, text: &str) -> i64 {
+        match st.storage.insert(
+            &Content::Text { text: text.into() },
+            InsertOpts::sized(1000),
+        ) {
+            Ok(crate::storage::InsertOutcome::Inserted(id)) => id,
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn history_roundtrip_through_dispatch() {
+        let st = test_shared();
+        let id = seed_entry(&st, "hello dispatch");
+        let resp = quick_dispatch(&st, IpcRequest::GetHistory { limit: None, query: None });
+        match resp {
+            IpcResponse::History { items } => {
+                assert_eq!(items.len(), 1);
+                assert_eq!(items[0].id, id);
+                assert_eq!(items[0].preview, "hello dispatch");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn search_filters_history() {
+        let st = test_shared();
+        seed_entry(&st, "alpha one");
+        seed_entry(&st, "beta two");
+        let resp = quick_dispatch(
+            &st,
+            IpcRequest::GetHistory {
+                limit: None,
+                query: Some("beta".into()),
+            },
+        );
+        match resp {
+            IpcResponse::History { items } => assert_eq!(items.len(), 1),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn pin_flow_reports_state() {
+        let st = test_shared();
+        let id = seed_entry(&st, "pin me");
+        assert!(matches!(
+            quick_dispatch(&st, IpcRequest::SetPinned { id, pinned: true }),
+            IpcResponse::Ok { .. }
+        ));
+        assert!(matches!(
+            quick_dispatch(&st, IpcRequest::SetPinned { id: 999, pinned: true }),
+            IpcResponse::Err { .. }
+        ));
+    }
+
+    #[test]
+    fn delete_is_idempotent_aware() {
+        let st = test_shared();
+        let id = seed_entry(&st, "doomed");
+        assert!(matches!(
+            quick_dispatch(&st, IpcRequest::DeleteItem { id }),
+            IpcResponse::Ok { .. }
+        ));
+        assert!(matches!(
+            quick_dispatch(&st, IpcRequest::DeleteItem { id }),
+            IpcResponse::Err { .. }
+        ));
+    }
+
+    #[test]
+    fn copy_without_clipboard_module_still_succeeds() {
+        // No clipboard module attached: copy must still store usage state
+        // and answer Ok (the daemon degrades gracefully).
+        let st = test_shared();
+        let id = seed_entry(&st, "target");
+        assert!(matches!(
+            quick_dispatch(&st, IpcRequest::CopyEntry { id }),
+            IpcResponse::Ok { .. }
+        ));
+    }
+
+    #[test]
+    fn stop_requests_shutdown() {
+        let st = test_shared();
+        assert!(matches!(
+            quick_dispatch(&st, IpcRequest::StopDaemon),
+            IpcResponse::Ok { .. }
+        ));
+    }
+}

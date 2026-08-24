@@ -5,9 +5,22 @@ use anyhow::Result;
 use rusqlite::Connection;
 
 impl Storage {
-    /// Drop unpinned entries beyond the count/age limits; thumbnails are
-    /// kept in sync. Returns the number of rows removed.
+    /// Drop unpinned entries beyond the count/age/size limits; thumbnails
+    /// are kept in sync. Returns the number of rows removed.
     pub fn prune(&self, max_entries: i64, max_age_days: i64) -> Result<usize> {
+        self.prune_with_budget(max_entries, max_age_days, None)
+    }
+
+    /// Full retention policy: count cap, age cap and a hard payload budget.
+    /// The budget is what actually bounds disk usage — it evicts the oldest
+    /// unpinned entries (in chunks, re-measuring after each pass) until
+    /// SUM(size_bytes) fits. Pinned entries are exempt from every rule.
+    pub fn prune_with_budget(
+        &self,
+        max_entries: i64,
+        max_age_days: i64,
+        max_total_bytes: Option<i64>,
+    ) -> Result<usize> {
         use crate::constants as c;
         let conn = self.conn.lock().expect("storage lock poisoned");
         let mut removed = 0;
@@ -27,6 +40,48 @@ impl Storage {
                  )",
                 rusqlite::params![max_entries],
             )?;
+        }
+        // Payload budget: evict oldest-unpinned entries until the running
+        // payload fits. The cumulative-sum subquery selects exactly the
+        // prefix that overflows; the outer loop only guards against
+        // boundary rounding across passes.
+        if let Some(budget) = max_total_bytes.filter(|b| *b > 0) {
+            loop {
+                let total: i64 = conn.query_row(
+                    "SELECT COALESCE(SUM(size_bytes), 0) FROM entries",
+                    [],
+                    |r| r.get(0),
+                )?;
+                if total <= budget {
+                    break;
+                }
+                let overflow = total - budget;
+                let n = self.delete_where(
+                    &conn,
+                    "pinned = 0 AND id IN (
+                         SELECT id FROM (
+                             SELECT id, size_bytes AS sz,
+                                    SUM(size_bytes) OVER (
+                                        ORDER BY created_at ASC, id ASC
+                                        ROWS BETWEEN UNBOUNDED PRECEDING
+                                        AND 1 PRECEDING
+                                    ) AS before_run
+                             FROM entries WHERE pinned = 0
+                         )
+                         WHERE COALESCE(before_run, 0) < ?1
+                     )",
+                    rusqlite::params![overflow],
+                )?;
+                if n == 0 {
+                    // Only pinned entries left; nothing more we may drop.
+                    log::warn!(
+                        "storage payload ({total}) exceeds max_total_bytes ({budget}) \
+                         but only pinned entries remain"
+                    );
+                    break;
+                }
+                removed += n;
+            }
         }
         Ok(removed)
     }

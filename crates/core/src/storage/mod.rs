@@ -10,14 +10,14 @@
 mod model;
 mod prune;
 mod thumbs;
+mod queries;
 
 pub use model::{InsertOpts, InsertOutcome};
 
 use anyhow::{Context, Result};
-use cliphistory_proto::{Content, HistoryItem};
+use cliphistory_proto::Content;
 use rusqlite::Connection;
 use sha2::{Digest, Sha256};
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -152,87 +152,6 @@ impl Storage {
             }
         }
         Ok(outcome)
-    }
-
-    pub fn count(&self) -> Result<i64> {
-        let n = self.conn.lock().expect("storage lock poisoned").query_row(
-            "SELECT COUNT(*) FROM entries",
-            [],
-            |r| r.get(0),
-        )?;
-        Ok(n)
-    }
-
-    pub fn history_items(
-        &self,
-        limit: Option<usize>,
-        query: Option<&str>,
-    ) -> Result<Vec<HistoryItem>> {
-        let limit_sql: i64 = limit.map_or(-1, |n| n.min(i64::MAX as usize) as i64);
-        let sql = format!(
-            "SELECT id, kind, mime, size_bytes, preview, created_at, use_count, pinned, hash
-             FROM entries
-             WHERE (?1 IS NULL OR preview LIKE '%' || ?1 || '%')
-             ORDER BY pinned DESC, created_at DESC
-             LIMIT {limit_sql}"
-        );
-        let conn = self.conn.lock().expect("storage lock poisoned");
-        let mut stmt = conn.prepare(&sql)?;
-        let like = query.map(|q| format!("%{q}%"));
-        let rows = stmt.query_map(rusqlite::params![like], |r| {
-            Ok((
-                HistoryItem {
-                    id: r.get(0)?,
-                    kind: r.get(1)?,
-                    mime: r.get(2)?,
-                    size_bytes: r.get::<_, i64>(3)? as u64,
-                    preview: r.get(4)?,
-                    created_at: r.get::<_, i64>(5)? as u64,
-                    use_count: r.get::<_, i64>(6)? as u64,
-                    pinned: r.get::<_, i64>(7)? != 0,
-                    thumbnail: None,
-                },
-                r.get::<_, String>(8)?,
-            ))
-        })?;
-        let mut items = Vec::new();
-        for row in rows {
-            let (mut item, hash) = row?;
-            if item.kind == "image" {
-                item.thumbnail = self
-                    .thumb_path(&hash)
-                    .filter(|p| p.exists())
-                    .map(|p| p.canonicalize().unwrap_or(p).display().to_string());
-            }
-            items.push(item);
-        }
-        Ok(items)
-    }
-
-    /// Full payload of an entry, reconstructed as [`Content`].
-    pub fn content(&self, id: i64) -> Result<Option<Content>> {
-        let conn = self.conn.lock().expect("storage lock poisoned");
-        let mut stmt =
-            conn.prepare("SELECT kind, mime, data, width, height FROM entries WHERE id = ?1")?;
-        let mut rows = stmt.query(rusqlite::params![id])?;
-        let Some(row) = rows.next()? else {
-            return Ok(None);
-        };
-        let kind: String = row.get(0)?;
-        let mime: String = row.get(1)?;
-        let mut blob: Vec<u8> = Vec::new();
-        row.get_ref(2)?.as_blob()?.read_to_end(&mut blob)?;
-        match kind.as_str() {
-            "text" => Ok(Some(Content::Text {
-                text: String::from_utf8_lossy(&blob).into_owned(),
-            })),
-            _ => Ok(Some(Content::Image {
-                mime,
-                data: blob,
-                width: row.get::<_, Option<i64>>(3)?.map(|v| v as u32),
-                height: row.get::<_, Option<i64>>(4)?.map(|v| v as u32),
-            })),
-        }
     }
 }
 
@@ -408,5 +327,56 @@ mod tests {
         };
         s.mark_used(id).unwrap();
         assert_eq!(s.history_items(None, None).unwrap()[0].use_count, 1);
+    }
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+
+    #[test]
+    fn payload_budget_evicts_oldest_unpinned() {
+        let s = Storage::open_in_memory().unwrap();
+        // Three ~120-byte entries; a 250-byte budget admits only the two
+        // newest.
+        for t in [format!("old-{}", "x".repeat(116)), format!("mid-{}", "x".repeat(116)), "newest-entry".to_string()] {
+            s.insert(
+                &Content::Text { text: t },
+                InsertOpts { max_item_size: 1000, thumbnail_size: 0 },
+            )
+            .unwrap();
+        }
+        s.prune_with_budget(0, 0, Some(250)).unwrap();
+        let left = s.history_items(None, None).unwrap();
+        assert_eq!(left.len(), 2, "oldest evicted to fit the budget");
+        assert_eq!(left.last().unwrap().preview, "newest-entry");
+    }
+
+    #[test]
+    fn pinned_entries_are_budget_exempt() {
+        let s = Storage::open_in_memory().unwrap();
+        for i in 0..3 {
+            let id = match s.insert(
+                &Content::Text { text: format!("e{i}") },
+                InsertOpts { max_item_size: 1000, thumbnail_size: 0 },
+            ) {
+                Ok(InsertOutcome::Inserted(id)) => id,
+                o => panic!("{o:?}"),
+            };
+            if i == 0 {
+                s.set_pinned(id, true).unwrap();
+            }
+        }
+        // Budget fits nothing beyond pinned; eviction must stop there.
+        s.prune_with_budget(0, 0, Some(1)).unwrap();
+        assert_eq!(s.count().unwrap(), 1);
+    }
+
+    #[test]
+    fn zero_budget_disables_size_cap() {
+        let s = Storage::open_in_memory().unwrap();
+        s.insert(&Content::Text { text: "x".into() }, InsertOpts::sized(10)).unwrap();
+        s.prune_with_budget(0, 0, Some(0)).unwrap();
+        assert_eq!(s.count().unwrap(), 1);
     }
 }
