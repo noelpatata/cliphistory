@@ -9,8 +9,10 @@
 //! automatic vertical scrolling of the selection, multi-line entries sized
 //! to their line count (or to their wrapped height when the daemon asks
 //! for word wrap), thumbnails rendered at their native aspect ratio,
-//! Nerd Font glyph fallback, click to select, and Delete to drop the
-//! focused entry through the daemon IPC while staying open.
+//! Nerd Font glyph fallback, click to select, Delete to drop the
+//! focused entry through the daemon IPC while staying open, and a
+//! double-confirmed clear-all (button or Ctrl+Delete) that keeps pinned
+//! entries.
 
 mod fonts;
 mod layout;
@@ -19,6 +21,12 @@ mod theme;
 use anyhow::Result;
 use cliphistory_proto::{ShowRequest, ShowResponse};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+/// How long the clear-all confirmation stays armed before disarming.
+const CLEAR_CONFIRM_WINDOW: Duration = Duration::from_secs(3);
+/// Width reserved in the filter bar for the clear-all button.
+const CLEAR_BUTTON_RESERVE: f32 = 96.0;
 
 /// One selectable history entry as the GUI needs it.
 struct Row {
@@ -26,6 +34,9 @@ struct Row {
     /// Multi-line display preview (already formatted by the daemon).
     label: String,
     id: i64,
+    /// Pinned entries survive a clear-all, so they must survive it locally
+    /// too.
+    pinned: bool,
 }
 
 /// Decoded thumbnail plus its intrinsic pixel size.
@@ -44,10 +55,11 @@ struct DecodedThumb {
 ///
 /// * clicking a row / pressing Enter → `Some(Selected)`
 /// * Delete removes the focused entry via the daemon; the window stays open
+/// * Ctrl+Delete (or the 🗑 button, twice) clears every unpinned entry
 /// * Esc / closing the window → `Some(Dismissed)`
 ///
 /// `socket` is the daemon IPC endpoint (from `CLIPHISTORY_SOCKET`);
-/// without it the delete shortcut is inert.
+/// without it the destructive shortcuts are inert.
 pub fn pick(req: &ShowRequest, socket: Option<std::path::PathBuf>) -> Result<ShowResponse> {
     if req.entries.is_empty() {
         return Ok(ShowResponse::Dismissed);
@@ -61,6 +73,7 @@ pub fn pick(req: &ShowRequest, socket: Option<std::path::PathBuf>) -> Result<Sho
             index_token: format!("[{:03}]", pos + 1),
             label: entry.preview.clone(),
             id: entry.id,
+            pinned: entry.pinned,
         })
         .collect();
 
@@ -136,6 +149,8 @@ struct PickerApp {
     mono_size: f32,
     /// Daemon IPC endpoint for live edits (delete); `None` disables them.
     socket: Option<std::path::PathBuf>,
+    /// When the clear-all confirmation was armed, if it is armed.
+    clear_armed_at: Option<Instant>,
     filter: String,
     selected: usize,
     /// Selection the auto-scroll last centered on (`usize::MAX` initially).
@@ -175,6 +190,7 @@ impl PickerApp {
             body_size,
             mono_size: theme::mono_size(body_size),
             socket,
+            clear_armed_at: None,
             filter: String::new(),
             selected: 0,
             scrolled_for: usize::MAX,
@@ -200,20 +216,38 @@ impl PickerApp {
     }
 
     /// Search field pinned to the top; a launcher window lives and dies by
-    /// it, so the caret is re-claimed every frame.
+    /// it, so the caret is re-claimed every frame. The clear-all button
+    /// lives at the right edge and doubles as the confirmation indicator.
     fn filter_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.label("🔍");
             let filter_response = ui.add(
                 egui::TextEdit::singleline(&mut self.filter)
                     .hint_text("filter…")
-                    .desired_width(f32::INFINITY),
+                    .desired_width(ui.available_width() - CLEAR_BUTTON_RESERVE),
             );
             if !filter_response.has_focus() {
                 filter_response.request_focus();
             }
+            self.clear_all_button(ui);
         });
         ui.separator();
+    }
+
+    /// The destructive clear-all control. First click arms it (label turns
+    /// into a warning), clicking again within the confirm window fires.
+    fn clear_all_button(&mut self, ui: &mut egui::Ui) {
+        let armed = self
+            .clear_armed_at
+            .is_some_and(|at| at.elapsed() <= CLEAR_CONFIRM_WINDOW);
+        let label = if armed {
+            egui::RichText::new("❗ sure?").color(egui::Color32::from_rgb(255, 150, 80))
+        } else {
+            egui::RichText::new("🗑 clear all")
+        };
+        if ui.button(label).clicked() {
+            self.clear_all_requested();
+        }
     }
 
     /// Drop the focused entry from the list and ask the daemon to delete
@@ -234,6 +268,7 @@ impl PickerApp {
         };
         // Force the auto-scroll to re-center on the new focused row.
         self.scrolled_for = usize::MAX;
+        self.renumber();
 
         if let Some(socket) = self.socket.clone() {
             std::thread::Builder::new()
@@ -244,6 +279,55 @@ impl PickerApp {
                     }
                 })
                 .ok();
+        }
+    }
+
+    /// Clear-all is destructive, so it asks twice: first call arms it (the
+    /// button lights up), the second within [`CLEAR_CONFIRM_WINDOW`] fires.
+    /// Pinned entries survive, matching the daemon's `ClearAll`.
+    fn clear_all_requested(&mut self) {
+        match self.clear_armed_at {
+            Some(at) if at.elapsed() <= CLEAR_CONFIRM_WINDOW => {
+                self.clear_armed_at = None;
+                self.clear_all_confirmed();
+            }
+            _ => self.clear_armed_at = Some(Instant::now()),
+        }
+    }
+
+    fn clear_all_confirmed(&mut self) {
+        // Pinned entries stay on the daemon; keep them in the list too.
+        // rows and thumbs are index-aligned, so filter them in lockstep.
+        let mut rows = Vec::new();
+        let mut thumbs = Vec::new();
+        for (row, thumb) in self.rows.drain(..).zip(self.thumbs.drain(..)) {
+            if row.pinned {
+                rows.push(row);
+                thumbs.push(thumb);
+            }
+        }
+        self.rows = rows;
+        self.thumbs = thumbs;
+        self.selected = 0;
+        self.scrolled_for = usize::MAX;
+        self.renumber();
+
+        if let Some(socket) = self.socket.clone() {
+            std::thread::Builder::new()
+                .name("clear-all".into())
+                .spawn(move || {
+                    if let Err(e) = crate::ipc::clear_history(&socket) {
+                        eprintln!("cliphistory: clearing history failed: {e:#}");
+                    }
+                })
+                .ok();
+        }
+    }
+
+    /// Re-align index tokens with list positions after structural edits.
+    fn renumber(&mut self) {
+        for (pos, row) in self.rows.iter_mut().enumerate() {
+            row.index_token = format!("[{:03}]", pos + 1);
         }
     }
 
@@ -271,13 +355,25 @@ impl PickerApp {
 impl eframe::App for PickerApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Keyboard: ↑/↓ move, Enter confirms, Esc dismisses, Delete drops
-        // the focused entry (window stays open). Typing always lands in the
-        // filter box (focus is re-requested every frame).
+        // the focused entry, Ctrl+Delete clears all unpinned (asked twice).
+        // Typing always lands in the filter box (focus is re-requested
+        // every frame).
         let up = ctx.input(|i| i.key_pressed(egui::Key::ArrowUp));
         let down = ctx.input(|i| i.key_pressed(egui::Key::ArrowDown));
         let confirm = ctx.input(|i| i.key_pressed(egui::Key::Enter)) && !self.rows.is_empty();
         let dismiss = ctx.input(|i| i.key_pressed(egui::Key::Escape));
-        let delete = ctx.input(|i| i.key_pressed(egui::Key::Delete));
+        let (delete, clear_all) = ctx.input(|i| {
+            let del = i.key_pressed(egui::Key::Delete);
+            let ctrl = i.modifiers.ctrl;
+            (del && !ctrl, del && ctrl)
+        });
+
+        // An armed confirmation expires on its own.
+        if let Some(at) = self.clear_armed_at {
+            if at.elapsed() > CLEAR_CONFIRM_WINDOW {
+                self.clear_armed_at = None;
+            }
+        }
 
         let visible = self.visible();
         if visible.is_empty() {
@@ -314,6 +410,10 @@ impl eframe::App for PickerApp {
         }
         if delete {
             self.delete_selected();
+            return;
+        }
+        if clear_all {
+            self.clear_all_requested();
             return;
         }
         if dismiss {

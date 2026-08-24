@@ -41,3 +41,15 @@ pub fn delete_entry(socket: &std::path::Path, id: i64) -> Result<String> {
         other => Err(anyhow::anyhow!("unexpected daemon reply: {other:?}")),
     }
 }
+
+/// Ask the daemon to clear history; pinned entries are kept.
+pub fn clear_history(socket: &std::path::Path) -> Result<String> {
+    let mut stream = UnixStream::connect(socket)
+        .with_context(|| format!("connecting to {}", socket.display()))?;
+    write_request(&mut stream, &IpcRequest::ClearAll)?;
+    match read_response(&mut BufReader::new(stream))? {
+        IpcResponse::Ok { message } => Ok(message),
+        IpcResponse::Err { message } => Err(anyhow::anyhow!(message)),
+        other => Err(anyhow::anyhow!("unexpected daemon reply: {other:?}")),
+    }
+}

@@ -145,7 +145,9 @@ is kernel-level and covers Wayland, X11 and TTY alike).
 `frontend-generic` is the only frontend you need: a **built-in egui window**
 (X11 + Wayland, nothing to install). Click an entry, or type in the filter
 box and use ↑/↓ + Enter; <kbd>Delete</kbd> removes the focused entry from
-history while the picker stays open; Esc dismisses.
+history while the picker stays open; <kbd>Ctrl</kbd>+<kbd>Delete</kbd> (or
+the 🗑 button, pressed twice to confirm) clears every **unpinned** entry;
+Esc dismisses.
 
 Notes:
 
