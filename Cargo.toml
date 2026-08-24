@@ -10,13 +10,11 @@ members = [
     "crates/modules/paster-uinput",
     "crates/modules/paster-wayland",
     "crates/modules/frontend-common",
-    "crates/modules/frontend-rofi",
-    "crates/modules/frontend-wofi",
-    "crates/modules/frontend-dmenu",
+    "crates/modules/frontend-generic",
 ]
 
 [workspace.package]
-version = "2.0.10"
+version = "0.0.10"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/noelpatata/cliphistory"
@@ -43,6 +41,8 @@ env_logger = "0.11"
 tempfile = "3"
 libc = "0.2"
 wl-clipboard-rs = "0.9"
+eframe = { version = "0.31", default-features = false, features = ["glow", "x11", "wayland", "default_fonts"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
 wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client", "staging"] }
 wayland-scanner = "0.31"

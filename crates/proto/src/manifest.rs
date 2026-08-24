@@ -28,7 +28,7 @@ impl ModuleKind {
 /// Self-description printed by every module binary via `--manifest`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModuleManifest {
-    /// Stable identifier, e.g. `clipboard-wayland`, `frontend-rofi`.
+    /// Stable identifier, e.g. `clipboard-wayland`, `frontend-generic`.
     pub id: String,
     pub kind: ModuleKind,
     pub version: String,

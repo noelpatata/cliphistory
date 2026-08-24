@@ -1,6 +1,15 @@
 # cliphistory configuration reference
 
-This is the full reference for `config.toml`. For an overview of what
+This is the full reference for `config.toml`.
+
+> **Who owns which config?** Everything in this file belongs to **core**
+> (the daemon): retention policy (`[storage]`), auto-paste behaviour
+> (`[general]`), discovery preferences and module sources. Individual
+> modules deliberately have *no* config file — their runtime mechanics
+> (poll intervals, which selections a clipboard claims, the paste chord,
+> menu arguments) are implementation details of that module. The few
+> user-facing hooks they expose are environment overrides such as
+> `CLIPHISTORY_MENU_BIN` for `frontend-generic`. For an overview of what
 cliphistory is, how it works and how to build it, read the
 [README](../README.md) first.
 
@@ -76,7 +85,8 @@ are exempt from **all** pruning.
 | `db_path`       | path    | `$XDG_DATA_HOME/cliphistory/history.db` | Database location. Empty/unset uses the XDG default. |
 | `max_entries`   | integer | `500`                                | Keep at most this many entries. Oldest unpinned entries are pruned after each insert. |
 | `max_item_size` | integer | `5242880` (5 MiB)                    | Payloads larger than this many bytes are silently skipped (logged at `info`). |
-| `max_age_days`  | integer | `0`                                  | Delete unpinned entries older than N days. `0` disables age-based pruning. |
+| `max_age_days` | integer| `0`     | Evict unpinned entries older than this many days. `0` = keep forever. |
+| `max_total_bytes` | integer | `268435456` (256 MiB) | **Hard payload budget**: oldest unpinned entries are evicted until stored data fits underneath it. This is the knob that actually bounds disk usage — entry counts alone cannot. `0` = unlimited.|
 | `thumbnail_size`| integer | `256`                                | Longest edge (px) of cached image previews shown in image-capable frontends. `0` disables thumbnails. Previews live in a `thumbs/` directory next to the database and are pruned together with their entries. |
 
 Notes:
@@ -104,7 +114,7 @@ cliphistory doctor     # full report incl. tool probe results
 | Key                  | Type   | Default | Description |
 |----------------------|--------|---------|-------------|
 | `preferred_clipboard`   | string | *(unset)* | Force a clipboard module module id (e.g. `"clipboard-x11"`). It wins over ranking and is downloaded automatically if missing. |
-| `preferred_frontend` | string | *(unset)* | Force a frontend module id (e.g. `"frontend-wofi"`). Same semantics. |
+| `preferred_frontend` | string | *(unset)* | Force a frontend module id (e.g. `"frontend-generic"`). Same semantics. |
 | `strict`             | bool   | `false` | When `true`, a candidate whose required tools are missing is skipped entirely instead of being used as a fallback. |
 
 Ranking rules, in order:
@@ -115,7 +125,7 @@ Ranking rules, in order:
 3. Static priority order per kind:
    clipboard modules — `clipboard-wayland` > `clipboard-x11` (session-filtered: a Wayland
    session never considers `clipboard-x11`); frontends —
-   `frontend-rofi` > `frontend-wofi` > `frontend-dmenu`.
+   `frontend-generic`.
 
 ---
 
@@ -142,10 +152,10 @@ Manual control without editing config:
 
 ```sh
 cliphistory modules install                       # whatever discovery wants
-cliphistory modules install clipboard-wayland frontend-rofi
-cliphistory modules install --force frontend-rofi # reinstall current version
+cliphistory modules install clipboard-wayland frontend-generic
+cliphistory modules install --force frontend-generic # reinstall current version
 cliphistory modules update                        # chase the channel/pins
-cliphistory modules remove frontend-dmenu
+cliphistory modules remove frontend-generic
 ```
 
 ### Using a fork or offline mirror
@@ -163,7 +173,7 @@ you pin them.
 ### Development loop
 
 ```sh
-cargo build -p cliphistory-clipboard-wayland -p cliphistory-frontend-rofi
+cargo build -p cliphistory-clipboard-wayland -p cliphistory-frontend-generic
 ```
 
 ```toml
@@ -191,7 +201,7 @@ Per-invocation extras also work without touching config: anything after
 `run` on a frontend binary's command line is forwarded to the menu program.
 
 Module-specific knobs deliberately live inside each module — e.g.
-`CLIPWELL_DMENU_BIN` lets `frontend-dmenu` use `bemenu` instead of `dmenu`.
+`CLIPWELL_DMENU_BIN` lets `frontend-generic` use `bemenu` instead of `dmenu`.
 The core knows nothing about module internals; that separation is what keeps
 the system modular.
 
@@ -209,7 +219,7 @@ log_level = "info"
 max_entries = 1000
 
 [discovery]
-preferred_frontend = "frontend-rofi"
+preferred_frontend = "frontend-generic"
 
 [frontend]
 extra_args = ["-theme", "~/.config/rofi/cliphistory.rasi"]
@@ -223,7 +233,7 @@ is Wayland, and both modules are pulled from GitHub Releases on first start.
 ```toml
 [discovery]
 preferred_clipboard = "clipboard-x11"
-preferred_frontend = "frontend-dmenu"
+preferred_frontend = "frontend-generic"
 strict = true
 ```
 
@@ -246,7 +256,7 @@ auto_update = false
 
 [modules.pins]
 clipboard-wayland = "v0.1.0"
-frontend-rofi = "v0.1.0"
+frontend-generic = "v0.1.0"
 ```
 
 ---

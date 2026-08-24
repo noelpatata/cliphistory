@@ -27,10 +27,20 @@ pub(crate) fn doctor_text(st: &Shared) -> String {
     ));
     lines.push(auto_paste_line(st));
     match st.storage.count() {
-        Ok(n) => lines.push(format!(
-            "storage:    {n} entries at {}",
-            st.storage.db_path().display()
-        )),
+        Ok(n) => {
+            let budget = st.cfg.storage.max_total_bytes;
+            let used = st.storage.db_size_bytes();
+            let tail = if budget > 0 {
+                format!(" | payload budget {} MiB", budget / (1024 * 1024))
+            } else {
+                String::new()
+            };
+            lines.push(format!(
+                "storage:    {n} entries at {} ({} bytes on disk{tail})",
+                st.storage.db_path().display(),
+                used
+            ));
+        }
         Err(e) => lines.push(format!("storage:    ERROR {e:#}")),
     }
     if let Ok(items) = super::actions::list_modules(st) {
@@ -50,7 +60,7 @@ fn auto_paste_line(st: &Shared) -> String {
     let paster_running =
         !st.paster_id.read().unwrap().is_empty() && st.paster_tx.read().unwrap().is_some();
 
-    let mechanism = if paste_command_override(st).is_some() {
+    let mechanism = if st.paste_command_override().is_some() {
         "custom command".into()
     } else if paster_running {
         format!("native module ({})", st.paster_id.read().unwrap())
@@ -72,11 +82,3 @@ fn auto_paste_line(st: &Shared) -> String {
     )
 }
 
-fn paste_command_override(st: &Shared) -> Option<&str> {
-    st.cfg
-        .general
-        .paste_command
-        .as_deref()
-        .map(str::trim)
-        .filter(|c| !c.is_empty())
-}

@@ -20,27 +20,39 @@ pub(crate) struct DesiredModules {
     pub paster: Option<String>,
 }
 
-fn candidate_lists(
-    cfg: &Config,
-    session: discovery::SessionType,
-) -> [(ModuleKind, &'static [&'static str], Option<&String>); 3] {
-    [
-        (
-            ModuleKind::Clipboard,
-            session.clipboard_candidates(),
-            cfg.discovery.preferred_clipboard.as_ref(),
-        ),
-        (
-            ModuleKind::Frontend,
-            c::FRONTEND_CANDIDATES,
-            cfg.discovery.preferred_frontend.as_ref(),
-        ),
-        (
-            ModuleKind::Paster,
-            session.paster_candidates(),
-            cfg.discovery.preferred_paster.as_ref(),
-        ),
-    ]
+/// One module kind's discovery inputs: candidate ids and configured
+/// preference.
+struct CandidateSource<'a> {
+    kind: ModuleKind,
+    candidates: &'static [&'static str],
+    preferred: Option<&'a str>,
+    /// Slot in [`DesiredModules`] the winner is recorded into.
+    slot: fn(&mut DesiredModules, String),
+}
+
+impl<'a> CandidateSource<'a> {
+    fn all(cfg: &'a Config, session: discovery::SessionType) -> [CandidateSource<'a>; 3] {
+        [
+            Self {
+                kind: ModuleKind::Clipboard,
+                candidates: session.clipboard_candidates(),
+                preferred: cfg.discovery.preferred_clipboard.as_deref(),
+                slot: |d, id| d.clipboard = Some(id),
+            },
+            Self {
+                kind: ModuleKind::Frontend,
+                candidates: c::FRONTEND_CANDIDATES,
+                preferred: cfg.discovery.preferred_frontend.as_deref(),
+                slot: |d, id| d.frontend = Some(id),
+            },
+            Self {
+                kind: ModuleKind::Paster,
+                candidates: session.paster_candidates(),
+                preferred: cfg.discovery.preferred_paster.as_deref(),
+                slot: |d, id| d.paster = Some(id),
+            },
+        ]
+    }
 }
 
 /// Decide which modules this machine should run, downloading anything
@@ -55,26 +67,25 @@ pub fn resolve_desired(shared: &mut Shared) -> Result<DesiredModules> {
     let mut desired = DesiredModules::default();
     let mut wanted: Vec<String> = Vec::new();
 
-    for (kind, candidates, preferred) in candidate_lists(&shared.cfg, shared.session) {
+    for source in CandidateSource::all(&shared.cfg, shared.session) {
         // Rank installed modules first…
-        let ranked =
-            discovery::rank_candidates(candidates, &infos, preferred.map(String::as_str), kind);
-        let pick = ranked.first().cloned();
+        let pick =
+            discovery::rank_candidates(source.candidates, &infos, source.preferred, source.kind)
+            .first()
+            .cloned();
 
         // …and fall back to remote metadata when nothing is installed yet
         // (fresh machine): rank by published `requires` probed on PATH.
         let want = match pick {
             Some(id) => Some(id),
-            None => remote_rank(shared, candidates, preferred.map(String::as_str), kind),
+            None => remote_rank(shared, source.candidates, source.preferred, source.kind),
         };
-        match want {
-            Some(id) => {
-                if !wanted.contains(&id) {
-                    wanted.push(id.clone());
-                }
-                record(kind, &mut desired, id);
+
+        if let Some(id) = want {
+            if !wanted.contains(&id) {
+                wanted.push(id.clone());
             }
-            None => continue,
+            (source.slot)(&mut desired, id);
         }
     }
 
@@ -101,13 +112,6 @@ pub fn resolve_desired(shared: &mut Shared) -> Result<DesiredModules> {
     Ok(desired)
 }
 
-fn record(kind: ModuleKind, desired: &mut DesiredModules, id: String) {
-    match kind {
-        ModuleKind::Clipboard => desired.clipboard = Some(id),
-        ModuleKind::Frontend => desired.frontend = Some(id),
-        ModuleKind::Paster => desired.paster = Some(id),
-    }
-}
 
 /// Rank not-yet-installed candidates using release-manifest metadata.
 /// `None` when the source is unreachable.
