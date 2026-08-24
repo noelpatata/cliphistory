@@ -96,7 +96,7 @@ pub struct DiscoveryConfig {
     pub preferred_clipboard: Option<String>,
     /// Force a specific frontend id, e.g. `frontend-generic`. Empty = auto.
     pub preferred_frontend: Option<String>,
-    /// Force a specific paster id, e.g. `paster-wayland`. Empty = auto.
+    /// Force a specific paster id, e.g. `paster-uinput`. Empty = auto.
     pub preferred_paster: Option<String>,
     /// Fail instead of falling back when requirements are unmet.
     pub strict: bool,
@@ -151,11 +151,38 @@ impl ModulesConfig {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct FrontendConfig {
     /// Extra CLI arguments appended to every frontend invocation.
     pub extra_args: Vec<String>,
+    /// Lines rendered per text entry in the embedded graphical picker.
+    /// Long snippets stay browsable without flooding the window.
+    /// `0` disables the cap.
+    pub max_preview_lines: usize,
+    /// Extra font for the embedded picker: an installed font family name
+    /// (e.g. `"JetBrainsMono Nerd Font"`) or a direct path to a
+    /// `.ttf`/`.otf`. When set, the picker renders in that font; unset =
+    /// default fonts plus an auto-detected Nerd Font as glyph fallback.
+    pub font_family: Option<String>,
+    /// Wrap long preview lines at the picker window's edge instead of
+    /// extending them past the viewport behind a horizontal scrollbar.
+    pub word_wrap: bool,
+    /// Base text size of the embedded picker, in pixels. The monospace
+    /// style (index tokens) stays two pixels smaller than this.
+    pub font_size: u32,
+}
+
+impl Default for FrontendConfig {
+    fn default() -> Self {
+        Self {
+            extra_args: Vec::new(),
+            max_preview_lines: c::DEFAULT_MAX_PREVIEW_LINES,
+            font_family: None,
+            word_wrap: false,
+            font_size: c::DEFAULT_FONT_SIZE,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

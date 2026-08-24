@@ -47,7 +47,8 @@ impl<'a> CandidateSource<'a> {
             },
             Self {
                 kind: ModuleKind::Paster,
-                candidates: session.paster_candidates(),
+                // Kernel-level uinput serves every session type.
+                candidates: c::PASTER_CANDIDATES,
                 preferred: cfg.discovery.preferred_paster.as_deref(),
                 slot: |d, id| d.paster = Some(id),
             },

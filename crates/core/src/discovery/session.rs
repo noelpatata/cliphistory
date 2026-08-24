@@ -36,14 +36,6 @@ impl fmt::Display for SessionType {
 }
 
 impl SessionType {
-    /// Paster module ids for this session (native paste injection).
-    pub fn paster_candidates(self) -> &'static [&'static str] {
-        match self {
-            SessionType::Wayland => c::PASTER_CANDIDATES_WAYLAND,
-            _ => c::PASTER_CANDIDATES_X11,
-        }
-    }
-
     /// Clipboard module ids to try for this kind of session, best first.
     pub fn clipboard_candidates(self) -> &'static [&'static str] {
         match self {

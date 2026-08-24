@@ -161,7 +161,20 @@ impl ModuleManager {
         results
     }
 
+    /// Remove an installed module.
+    ///
+    /// Honours the active layout: dev checkouts (`modules.local_dir`) keep
+    /// bare binaries in one flat directory; release installs keep a
+    /// per-module versioned directory under the install root.
     pub fn uninstall(&self, id: &str) -> Result<()> {
+        if let Some(local) = &self.cfg.local_dir {
+            let bin = crate::config::expand_path(local).join(super::bin_name(id));
+            if !bin.exists() {
+                anyhow::bail!("{id} is not installed");
+            }
+            fs::remove_file(&bin).with_context(|| format!("removing {}", bin.display()))?;
+            return Ok(());
+        }
         let dir = self.install_root().join(id);
         if !dir.exists() {
             anyhow::bail!("{id} is not installed");
@@ -174,6 +187,7 @@ impl ModuleManager {
 use anyhow::Context;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
+use std::path::Path;
 
 fn c_verify(bytes: &[u8], expected: &str) -> Result<()> {
     release::verify_sha256(bytes, expected)
@@ -189,4 +203,47 @@ fn swap_symlink(dir: &Path, link_name: &str, target: &Path) -> Result<()> {
         .with_context(|| format!("activating {}", final_link.display()))
 }
 
-use std::path::Path;
+#[cfg(test)]
+mod tests {
+    use super::super::{bin_name, ModuleManager};
+    use crate::config::ModulesConfig;
+    use tempfile::TempDir;
+
+    fn manager_with_local_dir(dir: &std::path::Path) -> ModuleManager {
+        ModuleManager::new(ModulesConfig {
+            local_dir: Some(dir.to_path_buf()),
+            ..Default::default()
+        })
+    }
+
+    #[test]
+    fn uninstall_removes_local_dir_binary() {
+        let tmp = TempDir::new().unwrap();
+        let bin = tmp.path().join(bin_name("testmod"));
+        std::fs::write(&bin, b"fake binary").unwrap();
+
+        let mm = manager_with_local_dir(tmp.path());
+        mm.uninstall("testmod").expect("uninstall should succeed");
+
+        assert!(!bin.exists(), "binary must be gone");
+    }
+
+    #[test]
+    fn uninstall_missing_local_module_is_a_clear_error() {
+        let tmp = TempDir::new().unwrap();
+        let mm = manager_with_local_dir(tmp.path());
+        let err = mm.uninstall("nope").expect_err("must fail");
+        assert!(err.to_string().contains("not installed"), "{err}");
+    }
+
+    #[test]
+    fn uninstall_release_layout_missing_reports_not_installed() {
+        // Default config, nothing installed: must fail with the accurate
+        // message rather than touch anything.
+        let mm = ModuleManager::new(ModulesConfig::default());
+        let err = mm
+            .uninstall("definitely-not-installed")
+            .expect_err("must fail");
+        assert!(err.to_string().contains("not installed"), "{err}");
+    }
+}

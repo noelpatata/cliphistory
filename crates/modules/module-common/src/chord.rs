@@ -30,14 +30,6 @@ impl State {
             State::Release => 0,
         }
     }
-
-    /// Value used by `zwp_virtual_keyboard_v1.key` requests.
-    pub fn wayland_value(self) -> u32 {
-        match self {
-            State::Press => 1,
-            State::Release => 0,
-        }
-    }
 }
 
 /// One evdev key event of the chord.

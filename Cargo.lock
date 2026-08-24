@@ -487,6 +487,7 @@ dependencies = [
  "cliphistory-frontend-common",
  "cliphistory-module-common",
  "cliphistory-proto",
+ "dirs",
  "eframe",
  "egui",
  "image",
@@ -525,21 +526,6 @@ dependencies = [
  "libc",
  "log",
  "serde_json",
-]
-
-[[package]]
-name = "cliphistory-paster-wayland"
-version = "0.0.10"
-dependencies = [
- "anyhow",
- "cliphistory-module-common",
- "cliphistory-proto",
- "env_logger",
- "log",
- "serde_json",
- "tempfile",
- "wayland-client",
- "wayland-scanner",
 ]
 
 [[package]]

@@ -42,7 +42,7 @@ thumbnail_size = 256            # px, longest edge of image previews; 0 disables
 [discovery]
 # preferred_clipboard = "clipboard-wayland"     # omit for automatic detection
 # preferred_frontend = "frontend-generic"
-# preferred_paster = "paster-wayland"
+# preferred_paster = "paster-uinput"
 strict = false                  # error instead of fallback when tools missing
 
 [modules]
@@ -58,6 +58,10 @@ auto_update = false
 
 [frontend]
 extra_args = []                 # e.g. ["-theme", "~/.config/rofi/cliphistory.rasi"]
+max_preview_lines = 8           # lines shown per text entry in the picker; 0 = unlimited
+word_wrap = false               # wrap long lines at the window edge instead of scrolling sideways
+font_size = 16                  # base picker text size in px; monospace stays 2 px smaller
+# font_family = "JetBrainsMono Nerd Font"  # any installed font, by family name or file path; empty = default + Nerd Font fallback
 "#,
             app = c::APP_NAME,
             db = c::DB_FILENAME,

@@ -1,6 +1,6 @@
 //! Read-only queries: counts, history listings and payload reconstruction.
 
-use super::Storage;
+use super::{model::ContentHead, Storage};
 use anyhow::Result;
 use std::io::Read;
 
@@ -60,6 +60,28 @@ impl Storage {
             items.push(item);
         }
         Ok(items)
+    }
+
+    /// First bytes of a stored payload, without loading the whole blob.
+    ///
+    /// Lets frontends render multi-line previews for text entries while
+    /// keeping multi-megabyte payloads out of the IPC path entirely.
+    pub fn content_head(&self, id: i64, max_bytes: usize) -> Result<Option<ContentHead>> {
+        let conn = self.conn.lock().expect("storage lock poisoned");
+        // substr() on a BLOB slices bytes, so `max_bytes` bounds the read.
+        let mut stmt = conn.prepare(
+            "SELECT kind, substr(data, 1, ?2) FROM entries WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query(rusqlite::params![id, max_bytes as i64])?;
+        let Some(row) = rows.next()? else {
+            return Ok(None);
+        };
+        let kind: String = row.get(0)?;
+        let head: Vec<u8> = row.get_ref(1)?.as_blob()?.to_vec();
+        Ok(Some(ContentHead {
+            kind,
+            text: String::from_utf8_lossy(&head).into_owned(),
+        }))
     }
 
     /// Full payload of an entry, reconstructed as [`Content`].

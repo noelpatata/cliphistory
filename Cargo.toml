@@ -8,7 +8,6 @@ members = [
     "crates/modules/clipboard-x11",
     "crates/modules/module-common",
     "crates/modules/paster-uinput",
-    "crates/modules/paster-wayland",
     "crates/modules/frontend-common",
     "crates/modules/frontend-generic",
 ]

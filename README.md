@@ -126,6 +126,8 @@ auto_update = false
 
 [frontend]
 extra_args = []               # passed to every frontend invocation
+max_preview_lines = 8         # lines per text entry in the picker; 0 = unlimited
+# font_family = "JetBrainsMono Nerd Font"  # any installed font by name; empty = default + Nerd Font fallback
 ```
 
 ## Images & previews
@@ -136,6 +138,11 @@ cached preview — longest edge configurable via `[storage].thumbnail_size`
 frontends declare `features = ["images"]` in their manifest and receive the
 preview path per entry; image-capable launchers (wofi) render them natively via
 `--allow-images`.
+
+Text entries keep their line structure in the embedded picker: multi-line
+content (code snippets, logs) renders at its natural height, capped by
+`[frontend].max_preview_lines` (default 8, `0` = unlimited) so one huge
+paste cannot flood the window; overflow is marked `… (+N more lines)`.
 
 ## Auto-paste
 
@@ -149,7 +156,6 @@ through, in order:
      X11 and TTY. Needs write access to `/dev/uinput` (logind grants it to
      the active seat) and the udev rule from `dist/udev/` so the compositor
      may read the injected device.
-   - `paster-wayland` — `zwp_virtual_keyboard_v1`, no special permissions.
 3. an external tool on PATH for the detected session (`wtype`, `ydotool`,
    `dotool`, `xdotool`)
 
@@ -321,8 +327,7 @@ crates/
     ├── module-common/        # shared NDJSON/chord/reader scaffolding
     ├── clipboard-wayland/    # wl-clipboard-rs, no external deps
     ├── clipboard-x11/        # xclip polling
-    ├── paster-uinput/        # kernel-level chord injection
-    ├── paster-wayland/       # zwp_virtual_keyboard injection
+    ├── paster-uinput/        # kernel-level chord injection (all sessions)
     ├── frontend-common/      # menu plumbing + indexed line rendering
     └── frontend-generic/     # built-in egui GUI window (primary); launcher/tty fallbacks
 ```

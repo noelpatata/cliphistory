@@ -152,7 +152,7 @@ fn resolve_target_ids(mm: &ModuleManager, cfg: &Config, ids: Vec<String>) -> Res
         let session = discovery::detect_session(&discovery::RealEnv);
         targets.extend(session.clipboard_candidates().iter().map(|s| s.to_string()));
         targets.extend(c::FRONTEND_CANDIDATES.iter().map(|s| s.to_string()));
-        targets.extend(session.paster_candidates().iter().map(|s| s.to_string()));
+        targets.extend(c::PASTER_CANDIDATES.iter().map(|s| s.to_string()));
     }
     Ok(targets)
 }

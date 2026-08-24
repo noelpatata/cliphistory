@@ -1,6 +1,7 @@
 //! Daemon-side actions behind IPC requests: history queries, copy/paste
 //! orchestration, frontend runs and module bookkeeping.
 
+use super::show_view;
 use super::Shared;
 use crate::constants as c;
 use crate::ipc::{DaemonStatus, IpcRequest, IpcResponse, ModuleInfo};
@@ -99,7 +100,7 @@ fn send_to_clipboard(st: &Shared, content: &Content) {
 
 /// Open the frontend picker and act on its answer.
 pub(crate) fn do_show(st: &Shared) -> IpcResponse {
-    use cliphistory_proto::ShowResponse;
+    use cliphistory_proto::{ShowResponse, ViewOptions};
 
     let items = match st.storage.history_items(Some(c::SHOW_ENTRIES_LIMIT), None) {
         Ok(i) => i,
@@ -109,6 +110,22 @@ pub(crate) fn do_show(st: &Shared) -> IpcResponse {
         return IpcResponse::ok("clipboard history is empty");
     }
 
+    let view = ViewOptions {
+        max_preview_lines: st.cfg.frontend.max_preview_lines,
+        font_family: st.cfg.frontend.font_family.clone(),
+        word_wrap: st.cfg.frontend.word_wrap,
+        font_size: st.cfg.frontend.font_size,
+    };
+    let head_of = |id| {
+        st.storage
+            .content_head(id, show_view::PREVIEW_HEAD_BYTES)
+            .ok()
+            .flatten()
+            .filter(|h| h.kind == "text")
+            .map(|h| h.text)
+    };
+    let request = show_view::build_request(items, view, &head_of);
+
     let fid = st.frontend_id.read().unwrap().clone();
     if fid.is_empty() {
         return IpcResponse::err("no frontend configured; run `cliphistory doctor`");
@@ -117,7 +134,7 @@ pub(crate) fn do_show(st: &Shared) -> IpcResponse {
         return IpcResponse::err(format!("frontend '{fid}' not found"));
     };
 
-    match crate::plugins::run_frontend(&module, &items, &st.cfg.frontend.extra_args) {
+    match crate::plugins::run_frontend(&module, &request, &st.cfg.frontend.extra_args) {
         Ok(ShowResponse::Selected { id }) => {
             log::info!("show: entry {id} selected");
             copy_entry(st, id)

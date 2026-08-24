@@ -158,10 +158,10 @@ pub fn query_manifest(bin: &std::path::Path) -> Result<cliphistory_proto::Module
     Ok(m)
 }
 
-/// Feed entries to a frontend and translate its answer.
+/// Feed a fully built show request to a frontend and translate its answer.
 pub fn run_frontend(
     module: &InstalledModule,
-    entries: &[cliphistory_proto::HistoryItem],
+    request: &cliphistory_proto::ShowRequest,
     extra_args: &[String],
 ) -> Result<cliphistory_proto::ShowResponse> {
     let mut child = Command::new(&module.bin_path)
@@ -174,12 +174,7 @@ pub fn run_frontend(
         .with_context(|| format!("spawning frontend {}", module.bin_path.display()))?;
 
     if let Some(mut stdin) = child.stdin.take() {
-        serde_json::to_writer(
-            &mut stdin,
-            &cliphistory_proto::ShowRequest {
-                entries: entries.to_vec(),
-            },
-        )?;
+        serde_json::to_writer(&mut stdin, request)?;
         stdin.flush()?;
         drop(stdin); // signals EOF so menus can render
     }

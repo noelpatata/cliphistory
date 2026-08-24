@@ -98,18 +98,6 @@ fn strip_index(line: &str) -> &str {
     }
 }
 
-/// `(index_token, flattened_label)` for dialog tools that take entries as
-/// CLI argument pairs (`zenity --column`, `kdialog --menu`).
-pub fn indexed_pair(pos: usize, preview: &str) -> (String, String) {
-    (
-        format!("[{:03}]", pos + 1),
-        preview
-            .replace('\n', "\\n")
-            .replace('\r', "")
-            .replace('\t', "  "),
-    )
-}
-
 fn flatten(preview: &str) -> String {
     preview
         .replace('\n', "\\n")

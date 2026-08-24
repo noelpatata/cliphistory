@@ -19,3 +19,4 @@ cliphistory-frontend-common = { workspace = true }
 cliphistory-module-common = { workspace = true }
 anyhow = { workspace = true }
 serde_json = { workspace = true }
+dirs = { workspace = true }

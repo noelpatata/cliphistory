@@ -65,7 +65,7 @@ cliphistory stop && cliphistory serve     # or: systemctl --user restart cliphis
 | Key             | Type   | Default | Description |
 |-----------------|--------|---------|-------------|
 | `log_level`     | string | `"info"` | Daemon log verbosity: `trace`, `debug`, `info`, `warn` or `error`. |
-| `auto_paste`    | bool   | `true`  | Replay the paste chord (**Shift+Insert**) into the focused window right after a selection is written back, via the discovered paster module (`paster-uinput` preferred; `paster-wayland` as Wayland-native fallback). |
+| `auto_paste`    | bool   | `true`  | Replay the paste chord (**Shift+Insert**) into the focused window right after a selection is written back, via the discovered paster module (`paster-uinput`, which covers every session type) or an external tool. |
 | `paste_delay_ms`| integer| `150`   | Grace period between clipboard ownership and the injected paste keystroke. |
 | `paste_command` | string | *(unset)* | Expert override: run this shell command instead of the paster module. |
 
@@ -158,6 +158,11 @@ cliphistory modules update                        # chase the channel/pins
 cliphistory modules remove frontend-generic
 ```
 
+`modules remove` honours the active layout: with `modules.local_dir`
+configured it deletes the binary from that directory (a later
+`cargo build` recreates it); otherwise it removes the module's directory
+under the install root.
+
 ### Using a fork or offline mirror
 
 ```toml
@@ -188,13 +193,21 @@ versions as `local`, and never touches the network.
 
 ## `[frontend]`
 
-| Key           | Type            | Default | Description |
-|---------------|-----------------|---------|-------------|
-| `extra_args`  | array of strings| `[]`    | Arguments appended to **every** frontend invocation, e.g. rofi themes. They arrive after the literal `run` argument, so frontends treat them as passthrough options. |
+| Key                 | Type             | Default | Description |
+|---------------------|------------------|---------|-------------|
+| `extra_args`        | array of strings | `[]`    | Arguments appended to **every** frontend invocation, e.g. rofi themes. They arrive after the literal `run` argument, so frontends treat them as passthrough options. |
+| `max_preview_lines` | integer          | `8`     | Lines shown per text entry in the embedded picker. Multi-line content (code snippets, logs) keeps its formatting but is capped so one entry cannot flood the window; the overflow is marked with `… (+N more lines)`. `0` disables the cap. |
+| `font_family`       | string           | *(unset)* | Font used by the picker: any **installed font family name** (e.g. `"JetBrainsMono Nerd Font"`) or a direct path to a `.ttf`/`.otf`. Resolution tries the path, then fontconfig (`fc-list`), then a filename scan. When set, that face renders all text (built-ins stay as glyph fallback); unset → default fonts plus an auto-detected Nerd Font covering private-use glyphs (shell-prompt icons). |
+| `word_wrap`         | bool             | `false` | Soft-wrap long preview lines at the picker window's right edge so the full text stays visible without horizontal scrolling (rows grow taller to fit). `false` keeps lines on one row each, extending past the viewport behind a horizontal scrollbar. |
+| `font_size`         | integer          | `16`    | Base text size (px) of the picker; the monospace style (index tokens) stays 2 px smaller. Applies to all picker text, including any configured `font_family`. |
 
 ```toml
 [frontend]
 extra_args = ["-theme", "~/.config/rofi/cliphistory.rasi"]
+max_preview_lines = 8
+# font_family = "Symbols Nerd Font"
+word_wrap = false
+font_size = 16
 ```
 
 Per-invocation extras also work without touching config: anything after

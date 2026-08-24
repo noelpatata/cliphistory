@@ -23,6 +23,15 @@ impl ModuleManager {
         let mut out = Vec::new();
         if let Some(local) = &self.cfg.local_dir {
             let dir = crate::config::expand_path(local);
+            // A stale dev path must degrade, not crash-loop the daemon.
+            if !dir.is_dir() {
+                log::warn!(
+                    "modules.local_dir '{}' does not exist or is not a \
+                     directory; no local modules loaded",
+                    dir.display()
+                );
+                return Ok(out);
+            }
             let mut found: Vec<InstalledModule> = fs::read_dir(&dir)?
                 .filter_map(|e| e.ok())
                 .map(|e| e.path())
@@ -94,3 +103,21 @@ impl ModuleManager {
 }
 
 use crate::constants as c;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::ModulesConfig;
+
+    #[test]
+    fn missing_local_dir_degrades_to_empty() {
+        // Regression: a stale modules.local_dir used to bubble ENOENT all
+        // the way up and crash-loop the daemon via systemd restarts.
+        let mm = ModuleManager::new(ModulesConfig {
+            local_dir: Some("/nonexistent/cliphistory-dev-dir".into()),
+            ..Default::default()
+        });
+        let installed = mm.list_installed().expect("must not error");
+        assert!(installed.is_empty());
+    }
+}

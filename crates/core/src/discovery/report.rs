@@ -72,7 +72,7 @@ pub fn discover(cfg: &Config, installed: &[InstalledInfo]) -> Result<DiscoveryRe
         ModuleKind::Frontend,
     );
     let pasters = rank_candidates(
-        session.paster_candidates(),
+        c::PASTER_CANDIDATES,
         &relevant,
         cfg.discovery.preferred_paster.as_deref(),
         ModuleKind::Paster,

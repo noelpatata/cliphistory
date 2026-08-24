@@ -10,6 +10,7 @@ pub(crate) mod bootstrap;
 pub(crate) mod actions;
 pub(crate) mod dispatch;
 pub(crate) mod report;
+pub(crate) mod show_view;
 pub(crate) mod state;
 pub(crate) mod supervisor;
 

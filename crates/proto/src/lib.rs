@@ -44,6 +44,7 @@ pub const FEATURE_IMAGES: &str = "images";
 pub use content::{human_size, Content};
 pub use frames::{
     ClipboardToHost, HostToClipboard, HostToPaster, PasterToHost, ShowRequest, ShowResponse,
+    ViewOptions, DEFAULT_FONT_SIZE, DEFAULT_MAX_PREVIEW_LINES,
 };
 pub use history::HistoryItem;
 pub use manifest::{ModuleKind, ModuleManifest};

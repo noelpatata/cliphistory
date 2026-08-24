@@ -135,12 +135,12 @@ cliphistory modules install                       # whatever discovery wants
 cliphistory modules install clipboard-x11 frontend-generic paster-uinput
 cliphistory modules install --force frontend-generic # reinstall even if current
 cliphistory modules update                        # chase channel/pins for everything installed
-cliphistory modules remove frontend-generic
+cliphistory modules remove frontend-generic       # also works in dev mode (deletes the local_dir binary)
 ```
 
 Module kinds: `clipboard-*` (read the system clipboard), `frontend-*`
 (render the picker), `paster-*` (replay the paste chord — `paster-uinput`
-works everywhere, `paster-wayland` uses the Wayland virtual keyboard).
+is kernel-level and covers Wayland, X11 and TTY alike).
 
 `frontend-generic` is the only frontend you need. Primary picker is its
 **built-in egui window** (X11 + Wayland, nothing to install): click an

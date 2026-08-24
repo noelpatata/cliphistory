@@ -5,7 +5,7 @@
 
 /// Protocol version this build of the core speaks.
 #[allow(unused_imports)]
-pub use cliphistory_proto::PROTOCOL_VERSION;
+pub use cliphistory_proto::{DEFAULT_FONT_SIZE, DEFAULT_MAX_PREVIEW_LINES, PROTOCOL_VERSION};
 
 // ---------------------------------------------------------------------------
 // Identity & filesystem layout
@@ -59,11 +59,12 @@ pub const DEFAULT_MAX_TOTAL_BYTES: i64 = 256 * 1024 * 1024; // 256 MiB
 pub const PASTE_DELAY_MS: u64 = 150;
 
 // ---------------------------------------------------------------------------
-// Paster module discovery priorities
+// Paster module discovery priorities (first match wins; config can override)
 // ---------------------------------------------------------------------------
 
-pub const PASTER_CANDIDATES_WAYLAND: &[&str] = &["paster-uinput", "paster-wayland"];
-pub const PASTER_CANDIDATES_X11: &[&str] = &["paster-uinput"];
+/// The uinput paster works identically on Wayland, X11 and TTY, so one list
+/// serves every session.
+pub const PASTER_CANDIDATES: &[&str] = &["paster-uinput"];
 
 pub const SECS_PER_DAY: u64 = 86_400;
 

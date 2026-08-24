@@ -28,3 +28,13 @@ impl InsertOpts {
         }
     }
 }
+
+/// Prefix of a stored payload, for frontends that render more than the
+/// flattened one-line preview without loading full blobs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContentHead {
+    /// Entry kind as stored (`text` / `image`).
+    pub kind: String,
+    /// First bytes of the payload, lossily decoded.
+    pub text: String,
+}

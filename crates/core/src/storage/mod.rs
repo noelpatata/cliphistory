@@ -12,7 +12,7 @@ mod prune;
 mod thumbs;
 mod queries;
 
-pub use model::{InsertOpts, InsertOutcome};
+pub use model::{ContentHead, InsertOpts, InsertOutcome};
 
 use anyhow::{Context, Result};
 use cliphistory_proto::Content;
