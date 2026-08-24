@@ -31,6 +31,17 @@ pub fn emit<T: serde::Serialize>(frame: &T) -> Result<()> {
     Ok(())
 }
 
+/// Install a logger for a module binary.
+///
+/// The daemon exports `RUST_LOG` to its children (see core `main`), so
+/// module verbosity follows the daemon's `log_level`; standalone runs
+/// default to warnings only.
+pub fn init_logging() {
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn"))
+        .format_timestamp_secs()
+        .init();
+}
+
 /// Entry point for the `--manifest` convention shared by every module:
 /// prints the manifest JSON on stdout, or the error on stderr with a
 /// failure exit code.

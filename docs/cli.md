@@ -142,12 +142,10 @@ Module kinds: `clipboard-*` (read the system clipboard), `frontend-*`
 (render the picker), `paster-*` (replay the paste chord — `paster-uinput`
 is kernel-level and covers Wayland, X11 and TTY alike).
 
-`frontend-generic` is the only frontend you need. Primary picker is its
-**built-in egui window** (X11 + Wayland, nothing to install): click an
-entry, or type in the filter box and use ↑/↓ + Enter; Esc dismisses.
-Fallbacks when no display is available: dmenu-style launchers
-(rofi/wofi/bemenu/fuzzel/tofi/dmenu; `CLIPHISTORY_MENU_BIN` overrides),
-then a numbered picker on your terminal.
+`frontend-generic` is the only frontend you need: a **built-in egui window**
+(X11 + Wayland, nothing to install). Click an entry, or type in the filter
+box and use ↑/↓ + Enter; <kbd>Delete</kbd> removes the focused entry from
+history while the picker stays open; Esc dismisses.
 
 Notes:
 

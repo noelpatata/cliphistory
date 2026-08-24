@@ -328,8 +328,7 @@ crates/
     ├── clipboard-wayland/    # wl-clipboard-rs, no external deps
     ├── clipboard-x11/        # xclip polling
     ├── paster-uinput/        # kernel-level chord injection (all sessions)
-    ├── frontend-common/      # menu plumbing + indexed line rendering
-    └── frontend-generic/     # built-in egui GUI window (primary); launcher/tty fallbacks
+    └── frontend-generic/     # built-in egui GUI window (the only frontend)
 ```
 
 ## Branching & releases

@@ -58,7 +58,12 @@ struct UinputSetup {
 }
 
 /// How long to wait between the events of one chord.
-pub const STEP: Duration = Duration::from_millis(20);
+///
+/// Measured cost: this is slept once per event, so a 4-event chord spends
+/// `4 × STEP` inside playback. 20 ms made every paste carry an 80 ms floor;
+/// 5 ms keeps a comfortable margin for apps to register the modifier while
+/// cutting that to ~20 ms.
+pub const STEP: Duration = Duration::from_millis(5);
 
 /// A virtual keyboard exposing exactly the keys cliphistory needs.
 pub struct Keyboard {

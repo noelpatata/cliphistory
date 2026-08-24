@@ -8,6 +8,11 @@ use egui::{FontId, TextStyle};
 /// Gap between the body face and the smaller derived faces (monospace,
 /// small): 16 px body renders a 14 px monospace.
 const MONO_DELTA: f32 = 2.0;
+
+/// Size of the derived monospace/small faces for a given body size.
+pub fn mono_size(body_size: f32) -> f32 {
+    (body_size - MONO_DELTA).max(1.0)
+}
 /// Breathing room inside each row.
 pub const ROW_PADDING: f32 = 10.0;
 /// Corner radius of row highlight rectangles.
@@ -27,7 +32,7 @@ const INDEX_COLOR: egui::Color32 = egui::Color32::from_rgb(130, 145, 170);
 /// `body_size` (from `frontend.font_size`) drives the main text faces;
 /// monospace and small styles stay [`MONO_DELTA`] smaller.
 pub fn apply(ctx: &egui::Context, body_size: f32) {
-    let mono_size = (body_size - MONO_DELTA).max(1.0);
+    let mono_size = mono_size(body_size);
     ctx.style_mut(|style| {
         style.text_styles = [
             (TextStyle::Body, FontId::proportional(body_size)),

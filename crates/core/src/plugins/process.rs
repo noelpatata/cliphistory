@@ -77,12 +77,19 @@ impl<F: FrameSpec> ModuleHandle<F> {
             .spawn(move || {
                 let mut w = std::io::LineWriter::new(raw_stdin);
                 for frame in rx {
-                    if serde_json::to_writer(&mut w, &frame).is_err() {
+                    let v = match serde_json::to_vec(&frame) {
+                        Ok(v) => v,
+                        Err(_) => break,
+                    };
+                    let t = std::time::Instant::now();
+                    if w.write_all(&v).is_err() || w.write_all(b"\n").is_err() {
                         break;
                     }
-                    if w.write_all(b"\n").is_err() {
-                        break;
-                    }
+                    log::debug!(
+                        "module stdin: {}B frame written in {:?}",
+                        v.len(),
+                        t.elapsed()
+                    );
                 }
             })?;
         Ok(Self { child, tx })
@@ -159,14 +166,20 @@ pub fn query_manifest(bin: &std::path::Path) -> Result<cliphistory_proto::Module
 }
 
 /// Feed a fully built show request to a frontend and translate its answer.
+///
+/// `socket_path` is exported to the child as `CLIPHISTORY_SOCKET` so
+/// long-lived pickers can call back into the daemon (e.g. the delete
+/// shortcut) instead of ending their one-response lifetime.
 pub fn run_frontend(
     module: &InstalledModule,
     request: &cliphistory_proto::ShowRequest,
     extra_args: &[String],
+    socket_path: &std::path::Path,
 ) -> Result<cliphistory_proto::ShowResponse> {
     let mut child = Command::new(&module.bin_path)
         .arg("run")
         .args(extra_args.iter())
+        .env("CLIPHISTORY_SOCKET", socket_path)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())

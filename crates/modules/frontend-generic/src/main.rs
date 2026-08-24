@@ -2,15 +2,15 @@
 //!
 //! One built-in picker: an embedded egui window that draws itself on X11
 //! and Wayland. No dmenu-style launchers, no zenity/kdialog, nothing to
-//! install. See [`gui`] for the window implementation and
-//! [`cliphistory_frontend_common`] for rendering/resolution.
+//! install. See [`gui`] for the window implementation and [`ipc`] for
+//! request reading and daemon calls.
 
 use anyhow::Result;
-use cliphistory_frontend_common as fc;
 use cliphistory_module_common as mcommon;
 use cliphistory_proto::{ModuleKind, ModuleManifest, PROTOCOL_VERSION};
 
 mod gui;
+mod ipc;
 
 const MODULE_ID: &str = "frontend-generic";
 
@@ -43,8 +43,8 @@ fn main() -> std::process::ExitCode {
 }
 
 fn run() -> Result<std::process::ExitCode> {
-    let req = fc::read_request()?;
-    let resp = gui::pick(&req)?;
+    let req = ipc::read_request()?;
+    let resp = gui::pick(&req, ipc::socket_from_env())?;
     println!("{}", serde_json::to_string(&resp)?);
     Ok(std::process::ExitCode::SUCCESS)
 }

@@ -36,14 +36,23 @@ pub(crate) fn status(st: &Shared) -> IpcResponse {
 
 /// Push a stored entry to the system clipboard and auto-paste it.
 pub(crate) fn copy_entry(st: &Shared, id: i64) -> IpcResponse {
+    let t0 = std::time::Instant::now();
     let content = match st.storage.content(id) {
         Ok(Some(c)) => c,
         Ok(None) => return IpcResponse::err(format!("no entry {id}")),
         Err(e) => return IpcResponse::err(format!("{e:#}")),
     };
+    let load = t0.elapsed();
     send_to_clipboard(st, &content);
+    let sent = t0.elapsed();
     let _ = st.storage.mark_used(id);
     trigger_auto_paste(st);
+    log::info!(
+        "copy {id}: payload {}B, load={load:?} clipboard_write={:?} total={:?}",
+        content.bytes().len(),
+        sent - load,
+        t0.elapsed()
+    );
     IpcResponse::ok(format!("copied {}", content.preview()))
 }
 
@@ -134,7 +143,12 @@ pub(crate) fn do_show(st: &Shared) -> IpcResponse {
         return IpcResponse::err(format!("frontend '{fid}' not found"));
     };
 
-    match crate::plugins::run_frontend(&module, &request, &st.cfg.frontend.extra_args) {
+    match crate::plugins::run_frontend(
+        &module,
+        &request,
+        &st.cfg.frontend.extra_args,
+        &crate::config::socket_path(),
+    ) {
         Ok(ShowResponse::Selected { id }) => {
             log::info!("show: entry {id} selected");
             copy_entry(st, id)

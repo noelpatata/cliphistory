@@ -31,7 +31,7 @@ pub const MODULE_BINARY_PERMS: u32 = 0o755;
 // ---------------------------------------------------------------------------
 
 /// Images travel base64-encoded inside single NDJSON lines; keep generous headroom.
-pub const MAX_IPC_LINE_BYTES: usize = 33_554_432;
+pub use cliphistory_proto::MAX_IPC_LINE_BYTES;
 pub const DEFAULT_HISTORY_LIMIT: usize = 20;
 pub const SHOW_ENTRIES_LIMIT: usize = 100;
 
@@ -49,6 +49,9 @@ pub const DEFAULT_THUMBNAIL_SIZE: u32 = 256;
 /// entries until the total fits. This is what actually bounds disk usage —
 /// an entry-count cap alone cannot (N x max_item_size grows unbounded).
 pub const DEFAULT_MAX_TOTAL_BYTES: i64 = 256 * 1024 * 1024; // 256 MiB
+/// Byte budget of the hot in-memory payload cache in front of the blob
+/// store; 0 disables caching.
+pub const DEFAULT_MAX_CACHE_BYTES: i64 = 32 * 1024 * 1024; // 32 MiB
 
 // ---------------------------------------------------------------------------
 // Auto-paste (runs after a selection is written back to the clipboard)

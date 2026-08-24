@@ -89,7 +89,15 @@ impl PollingReader for WaylandReader {
         std::thread::spawn({
             let content = content.clone();
             move || {
-                if let Err(e) = set_clipboard(&content) {
+                let t = std::time::Instant::now();
+                let result = set_clipboard(&content);
+                log::info!(
+                    "selection claimed in {:?} ({} bytes, {:?})",
+                    t.elapsed(),
+                    content.bytes().len(),
+                    content.kind()
+                );
+                if let Err(e) = result {
                     log_frame_error(&format!("set-clipboard failed: {e:#}"));
                 }
             }
@@ -102,6 +110,7 @@ fn main() -> std::process::ExitCode {
     if args.iter().any(|a| a == "--manifest") {
         return mcommon::manifest_main(manifest);
     }
+    mcommon::init_logging();
 
     match run() {
         Ok(()) => std::process::ExitCode::SUCCESS,

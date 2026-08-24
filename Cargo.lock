@@ -471,20 +471,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "cliphistory-frontend-common"
-version = "0.0.10"
-dependencies = [
- "anyhow",
- "cliphistory-proto",
- "serde_json",
-]
-
-[[package]]
 name = "cliphistory-frontend-generic"
 version = "0.0.10"
 dependencies = [
  "anyhow",
- "cliphistory-frontend-common",
  "cliphistory-module-common",
  "cliphistory-proto",
  "dirs",
@@ -508,6 +498,7 @@ version = "0.0.10"
 dependencies = [
  "anyhow",
  "cliphistory-proto",
+ "env_logger",
  "hex",
  "log",
  "serde",
@@ -532,6 +523,7 @@ dependencies = [
 name = "cliphistory-proto"
 version = "0.0.10"
 dependencies = [
+ "anyhow",
  "base64",
  "serde",
  "serde_json",

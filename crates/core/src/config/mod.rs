@@ -63,6 +63,9 @@ pub struct StorageConfig {
     /// Longest edge of cached image previews, in pixels. 0 disables
     /// thumbnail generation entirely.
     pub thumbnail_size: u32,
+    /// Byte budget of the hot in-memory payload cache that fronts the
+    /// database (speeds up repeated pastes). 0 disables caching.
+    pub max_cache_bytes: i64,
 }
 
 impl Default for StorageConfig {
@@ -74,6 +77,7 @@ impl Default for StorageConfig {
             max_age_days: c::DEFAULT_MAX_AGE_DAYS,
             max_total_bytes: c::DEFAULT_MAX_TOTAL_BYTES,
             thumbnail_size: c::DEFAULT_THUMBNAIL_SIZE,
+            max_cache_bytes: c::DEFAULT_MAX_CACHE_BYTES,
         }
     }
 }

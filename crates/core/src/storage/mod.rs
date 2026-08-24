@@ -4,17 +4,19 @@
 //! to the top instead of duplicating. Pinned entries survive all pruning.
 //!
 //! Split by concern: [`prune`] owns mutations, [`thumbs`] the preview cache,
-//! [`model`] the insert types; this file holds the connection, insert and
-//! read queries.
+//! [`cache`] the hot payload LRU, [`model`] the insert types; this file
+//! holds the connection, insert and read queries.
 
+mod cache;
 mod model;
 mod prune;
-mod thumbs;
 mod queries;
+mod thumbs;
 
 pub use model::{ContentHead, InsertOpts, InsertOutcome};
 
 use anyhow::{Context, Result};
+use cache::ContentCache;
 use cliphistory_proto::Content;
 use rusqlite::Connection;
 use sha2::{Digest, Sha256};
@@ -50,11 +52,15 @@ CREATE INDEX IF NOT EXISTS idx_entries_created ON entries (created_at DESC);
 
 pub struct Storage {
     conn: Mutex<Connection>,
+    /// Hot payload LRU in front of the blob reads. Guarded by its own
+    /// mutex, always taken *after* `conn` — the two are never nested the
+    /// other way around.
+    cache: Mutex<ContentCache>,
     path: PathBuf,
 }
 
 impl Storage {
-    pub fn open(path: &Path) -> Result<Self> {
+    pub fn open(path: &Path, max_cache_bytes: i64) -> Result<Self> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("creating {}", parent.display()))?;
@@ -65,16 +71,23 @@ impl Storage {
         conn.execute_batch(SCHEMA).context("initialising schema")?;
         Ok(Self {
             conn: Mutex::new(conn),
+            cache: Mutex::new(ContentCache::new(max_cache_bytes.max(0) as usize)),
             path: path.to_path_buf(),
         })
     }
 
     #[cfg(test)]
     pub fn open_in_memory() -> Result<Self> {
+        Self::open_in_memory_with(crate::constants::DEFAULT_MAX_CACHE_BYTES)
+    }
+
+    #[cfg(test)]
+    pub fn open_in_memory_with(max_cache_bytes: i64) -> Result<Self> {
         let conn = Connection::open_in_memory()?;
         conn.execute_batch(SCHEMA)?;
         Ok(Self {
             conn: Mutex::new(conn),
+            cache: Mutex::new(ContentCache::new(max_cache_bytes.max(0) as usize)),
             path: PathBuf::from(":memory:"),
         })
     }
@@ -145,6 +158,14 @@ impl Storage {
             InsertOutcome::Inserted(conn.last_insert_rowid())
         };
         drop(conn);
+
+        if let Some(id) = outcome.id() {
+            // A fresh copy is the most likely next paste; keep it hot.
+            self.cache
+                .lock()
+                .expect("storage lock poisoned")
+                .put(id, content.clone());
+        }
 
         if matches!(content, Content::Image { .. }) && opts.thumbnail_size > 0 {
             if let Err(e) = self.ensure_thumbnail(&hash, &bytes, opts.thumbnail_size) {
@@ -260,9 +281,67 @@ mod tests {
     }
 
     #[test]
+    fn content_is_cached_and_invalidation_is_precise() {
+        // Tiny budget so eviction behaviour is observable through reads.
+        let s = Storage::open_in_memory_with(64).unwrap();
+        let id = match s.insert(&text("hot"), InsertOpts::sized(100)).unwrap() {
+            InsertOutcome::Inserted(id) => id,
+            o => panic!("{o:?}"),
+        };
+        // insert warmed the cache; the read is served from it.
+        assert_eq!(s.content(id).unwrap().unwrap(), text("hot"));
+
+        // Deleting a cached row must invalidate its copy.
+        assert!(s.delete(id).unwrap());
+        assert_eq!(s.content(id).unwrap(), None);
+    }
+
+    #[test]
+    fn cache_survives_prune_of_other_entries() {
+        // Budget holds exactly one payload: pruning older rows must not
+        // flush the survivor's cached copy (prune runs after each insert).
+        let s = Storage::open_in_memory_with(8).unwrap();
+        s.insert(&text("old"), InsertOpts::sized(100)).unwrap();
+        s.insert(&text("new1"), InsertOpts::sized(100)).unwrap();
+        let keep_id = match s.insert(&text("keep"), InsertOpts::sized(100)).unwrap() {
+            InsertOutcome::Inserted(id) => id,
+            o => panic!("{o:?}"),
+        };
+        // Warm the cache for `keep` explicitly (insert of 3rd evicted it).
+        assert_eq!(s.content(keep_id).unwrap().unwrap(), text("keep"));
+        // Age/count prune removes nothing here; force budget pressure via
+        // max_total_bytes: evicts oldest unpinned ("old", maybe "new1").
+        let removed = s
+            .prune_with_budget(0, 0, Some(10))
+            .expect("prune with budget");
+        assert!(removed >= 1);
+        assert_eq!(
+            s.content(keep_id).unwrap().unwrap(),
+            text("keep"),
+            "survivor must stay hot across prune"
+        );
+    }
+
+    #[test]
+    fn clear_flushes_cache_too() {
+        let s = Storage::open_in_memory_with(100).unwrap();
+        let id = match s.insert(&text("doomed"), InsertOpts::sized(100)).unwrap() {
+            InsertOutcome::Inserted(id) => id,
+            o => panic!("{o:?}"),
+        };
+        assert!(s.content(id).unwrap().is_some());
+        s.clear().unwrap();
+        assert_eq!(s.content(id).unwrap(), None);
+    }
+
+    #[test]
     fn thumbnails_lifecycle() {
         let tmp = tempfile::tempdir().unwrap();
-        let s = Storage::open(&tmp.path().join("history.db")).unwrap();
+        let s = Storage::open(
+            &tmp.path().join("history.db"),
+            crate::constants::DEFAULT_MAX_CACHE_BYTES,
+        )
+        .unwrap();
 
         let png: Content = {
             // 4x2 red PNG built through the image crate.

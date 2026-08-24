@@ -97,10 +97,16 @@ impl Storage {
             )
             .ok();
         let n = conn.execute("DELETE FROM entries WHERE id = ?1", rusqlite::params![id])?;
+        drop(conn);
         if n > 0 {
             if let Some(hash) = hash {
                 self.remove_thumb(&hash);
             }
+            // A deleted row must never be served from the hot cache.
+            self.cache
+                .lock()
+                .expect("storage lock poisoned")
+                .evict_ids(&[id]);
         }
         Ok(n > 0)
     }
@@ -108,15 +114,20 @@ impl Storage {
     /// Clear history; pinned entries are kept.
     pub fn clear(&self) -> Result<usize> {
         let conn = self.conn.lock().expect("storage lock poisoned");
-        let hashes: Vec<String> = {
-            let mut stmt = conn.prepare("SELECT hash FROM entries WHERE pinned = 0")?;
-            let rows = stmt.query_map([], |r| r.get(0))?;
+        let victims: Vec<(i64, String)> = {
+            let mut stmt = conn.prepare("SELECT id, hash FROM entries WHERE pinned = 0")?;
+            let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
             rows.collect::<std::result::Result<Vec<_>, _>>()?
         };
         let n = conn.execute("DELETE FROM entries WHERE pinned = 0", [])?;
-        for hash in &hashes {
+        drop(conn);
+        for (_, hash) in &victims {
             self.remove_thumb(hash);
         }
+        self.cache
+            .lock()
+            .expect("storage lock poisoned")
+            .evict_ids(&victims.iter().map(|(id, _)| *id).collect::<Vec<_>>());
         Ok(n)
     }
 
@@ -137,23 +148,28 @@ impl Storage {
     }
 
     /// Delete rows matching `where_clause`; returns rows removed and drops
-    /// the matching thumbnail files.
+    /// the matching thumbnail files plus hot cache copies.
     fn delete_where(
         &self,
         conn: &Connection,
         where_clause: &str,
         params: impl rusqlite::Params,
     ) -> Result<usize> {
-        let hashes: Vec<String> = {
-            let mut stmt =
-                conn.prepare(&format!("SELECT hash FROM entries WHERE {where_clause}"))?;
-            let rows = stmt.query_map(params, |r| r.get::<_, String>(0))?;
+        let victims: Vec<(i64, String)> = {
+            let mut stmt = conn.prepare(&format!(
+                "SELECT id, hash FROM entries WHERE {where_clause}"
+            ))?;
+            let rows = stmt.query_map(params, |r| Ok((r.get(0)?, r.get(1)?)))?;
             rows.collect::<std::result::Result<Vec<_>, _>>()?
         };
-        if hashes.is_empty() {
+        if victims.is_empty() {
             return Ok(0);
         }
         // SQLite has a per-connection parameter limit; chunk to stay safe.
+        let hashes = victims
+            .iter()
+            .map(|(_, h)| h.clone())
+            .collect::<Vec<String>>();
         let placeholders = hashes.iter().map(|_| "?").collect::<Vec<_>>().join(",");
         let values: Vec<&dyn rusqlite::ToSql> =
             hashes.iter().map(|h| h as &dyn rusqlite::ToSql).collect();
@@ -161,9 +177,15 @@ impl Storage {
             &format!("DELETE FROM entries WHERE hash IN ({placeholders})"),
             values.as_slice(),
         )?;
-        for hash in &hashes {
+        for (_, hash) in &victims {
             self.remove_thumb(hash);
         }
+        // Pruning runs after every insert — precise eviction keeps the
+        // cache useful instead of flushing it wholesale.
+        self.cache
+            .lock()
+            .expect("storage lock poisoned")
+            .evict_ids(&victims.iter().map(|(id, _)| *id).collect::<Vec<_>>());
         Ok(n)
     }
 }

@@ -49,6 +49,7 @@ fn main() -> std::process::ExitCode {
     if args.iter().any(|a| a == "--manifest") {
         return mcommon::manifest_main(manifest);
     }
+    mcommon::init_logging();
 
     match run() {
         Ok(()) => std::process::ExitCode::SUCCESS,

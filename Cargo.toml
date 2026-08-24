@@ -8,7 +8,6 @@ members = [
     "crates/modules/clipboard-x11",
     "crates/modules/module-common",
     "crates/modules/paster-uinput",
-    "crates/modules/frontend-common",
     "crates/modules/frontend-generic",
 ]
 
@@ -22,7 +21,6 @@ authors = ["cliphistory contributors"]
 [workspace.dependencies]
 cliphistory-proto = { path = "crates/proto" }
 cliphistory-image-utils = { path = "crates/image-utils" }
-cliphistory-frontend-common = { path = "crates/modules/frontend-common" }
 cliphistory-module-common = { path = "crates/modules/module-common" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

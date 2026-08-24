@@ -38,6 +38,7 @@ max_item_size = {max_item}      # bytes; larger payloads are ignored
 max_age_days = 0                # 0 = keep forever
 max_total_bytes = {max_total}   # hard payload budget; 0 = unlimited
 thumbnail_size = 256            # px, longest edge of image previews; 0 disables
+max_cache_bytes = 33554432      # RAM cache of recent payloads for faster pasting; 0 disables
 
 [discovery]
 # preferred_clipboard = "clipboard-wayland"     # omit for automatic detection

@@ -35,6 +35,9 @@ fn exit_code(code: i32) -> std::process::ExitCode {
 
 fn init_logging(cfg: &config::Config) {
     let filter = std::env::var("RUST_LOG").unwrap_or_else(|_| cfg.general.log_level.clone());
+    // Propagate the effective level to every spawned module (they inherit
+    // our environment) so module-side logs are tunable from this one knob.
+    std::env::set_var("RUST_LOG", &filter);
     env_logger::Builder::new()
         .filter_level(filter.parse().unwrap_or(log::LevelFilter::Info))
         .format_timestamp_secs()

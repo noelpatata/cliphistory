@@ -40,8 +40,13 @@ pub fn serve<B: PasteBackend>(backend_name: BackendName, mut backend: B) -> Resu
         match frame {
             HostToPaster::Ping => emit(&PasterToHost::Pong)?,
             HostToPaster::Paste => {
-                log::debug!("injecting paste chord via {backend_name}");
-                if let Err(e) = backend.play() {
+                let t = std::time::Instant::now();
+                let result = backend.play();
+                log::info!(
+                    "paste chord via {backend_name} injected in {:?}",
+                    t.elapsed()
+                );
+                if let Err(e) = result {
                     let _ = emit(&PasterToHost::Error {
                         message: format!("paste failed: {e:#}"),
                     });

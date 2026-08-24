@@ -11,6 +11,16 @@ pub enum InsertOutcome {
     TooLarge { size: i64, limit: i64 },
 }
 
+impl InsertOutcome {
+    /// The entry id when something was stored or promoted.
+    pub fn id(&self) -> Option<i64> {
+        match self {
+            InsertOutcome::Inserted(id) | InsertOutcome::Duplicate(id) => Some(*id),
+            InsertOutcome::TooLarge { .. } => None,
+        }
+    }
+}
+
 /// Per-insert behaviour knobs.
 #[derive(Debug, Clone, Copy)]
 pub struct InsertOpts {

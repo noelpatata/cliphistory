@@ -85,7 +85,29 @@ impl Storage {
     }
 
     /// Full payload of an entry, reconstructed as [`Content`].
+    ///
+    /// Served from the hot payload cache when possible; disk reads
+    /// repopulate it. Pasting is the hot path here.
     pub fn content(&self, id: i64) -> Result<Option<Content>> {
+        {
+            let mut cache = self.cache.lock().expect("storage lock poisoned");
+            if let Some(cached) = cache.get(id) {
+                log::debug!("content {id}: cache hit, {}B", cached.bytes().len());
+                return Ok(Some(cached));
+            }
+        }
+        let loaded = self.content_from_disk(id)?;
+        log::debug!("content {id}: cache miss, reading blob from db");
+        if let Some(content) = &loaded {
+            self.cache
+                .lock()
+                .expect("storage lock poisoned")
+                .put(id, content.clone());
+        }
+        Ok(loaded)
+    }
+
+    fn content_from_disk(&self, id: i64) -> Result<Option<Content>> {
         let conn = self.conn.lock().expect("storage lock poisoned");
         let mut stmt =
             conn.prepare("SELECT kind, mime, data, width, height FROM entries WHERE id = ?1")?;

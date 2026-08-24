@@ -9,11 +9,13 @@
 //! * [`content`]  — clipboard payloads and preview formatting
 //! * [`history`]  — metadata-only history items
 //! * [`frames`]   — the three NDJSON envelope pairs
+//! * [`ipc`]      — daemon/client frames and socket transport helpers
 //! * [`manifest`] — module kinds, capabilities, manifests
 
 pub mod content;
 pub mod frames;
 pub mod history;
+pub mod ipc;
 pub mod manifest;
 
 // ---------------------------------------------------------------------------
@@ -47,6 +49,10 @@ pub use frames::{
     ViewOptions, DEFAULT_FONT_SIZE, DEFAULT_MAX_PREVIEW_LINES,
 };
 pub use history::HistoryItem;
+pub use ipc::{
+    read_response, write_request, DaemonStatus, IpcRequest, IpcResponse, ModuleInfo,
+    MAX_IPC_LINE_BYTES,
+};
 pub use manifest::{ModuleKind, ModuleManifest};
 
 #[cfg(test)]

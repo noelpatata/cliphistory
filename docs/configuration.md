@@ -6,10 +6,8 @@ This is the full reference for `config.toml`.
 > (the daemon): retention policy (`[storage]`), auto-paste behaviour
 > (`[general]`), discovery preferences and module sources. Individual
 > modules deliberately have *no* config file — their runtime mechanics
-> (poll intervals, which selections a clipboard claims, the paste chord,
-> menu arguments) are implementation details of that module. The few
-> user-facing hooks they expose are environment overrides such as
-> `CLIPHISTORY_MENU_BIN` for `frontend-generic`. For an overview of what
+> (poll intervals, which selections a clipboard claims, the paste chord)
+> are implementation details of that module. For an overview of what
 cliphistory is, how it works and how to build it, read the
 [README](../README.md) first.
 
@@ -88,6 +86,7 @@ are exempt from **all** pruning.
 | `max_age_days` | integer| `0`     | Evict unpinned entries older than this many days. `0` = keep forever. |
 | `max_total_bytes` | integer | `268435456` (256 MiB) | **Hard payload budget**: oldest unpinned entries are evicted until stored data fits underneath it. This is the knob that actually bounds disk usage — entry counts alone cannot. `0` = unlimited.|
 | `thumbnail_size`| integer | `256`                                | Longest edge (px) of cached image previews shown in image-capable frontends. `0` disables thumbnails. Previews live in a `thumbs/` directory next to the database and are pruned together with their entries. |
+| `max_cache_bytes` | integer | `33554432` (32 MiB)                | Byte budget of the in-memory payload cache in front of the database. Recently copied/read entries are served from RAM, making select-and-paste effectively instant; misses fall through to the database. Entries leave the cache by recency (LRU) or as soon as they are deleted/pruned. `0` disables caching. |
 
 Notes:
 

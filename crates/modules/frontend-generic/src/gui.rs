@@ -2,15 +2,18 @@
 //!
 //! Draws its own window on X11 and Wayland — no external launcher, no
 //! system toolkit. This module owns orchestration and interaction; visual
-//! constants live in [`theme`], font setup in [`fonts`].
+//! constants live in [`theme`], font setup in [`fonts`], row measurement
+//! in [`layout`].
 //!
 //! Features: live filter-as-you-type, ↑/↓ + Enter keyboard navigation with
 //! automatic vertical scrolling of the selection, multi-line entries sized
 //! to their line count (or to their wrapped height when the daemon asks
 //! for word wrap), thumbnails rendered at their native aspect ratio,
-//! Nerd Font glyph fallback, click to select.
+//! Nerd Font glyph fallback, click to select, and Delete to drop the
+//! focused entry through the daemon IPC while staying open.
 
 mod fonts;
+mod layout;
 mod theme;
 
 use anyhow::Result;
@@ -40,8 +43,12 @@ struct DecodedThumb {
 /// Show the picker window and block until the user chooses or closes it.
 ///
 /// * clicking a row / pressing Enter → `Some(Selected)`
+/// * Delete removes the focused entry via the daemon; the window stays open
 /// * Esc / closing the window → `Some(Dismissed)`
-pub fn pick(req: &ShowRequest) -> Result<ShowResponse> {
+///
+/// `socket` is the daemon IPC endpoint (from `CLIPHISTORY_SOCKET`);
+/// without it the delete shortcut is inert.
+pub fn pick(req: &ShowRequest, socket: Option<std::path::PathBuf>) -> Result<ShowResponse> {
     if req.entries.is_empty() {
         return Ok(ShowResponse::Dismissed);
     }
@@ -87,6 +94,7 @@ pub fn pick(req: &ShowRequest) -> Result<ShowResponse> {
                 decoded_thumbs,
                 word_wrap,
                 font_size,
+                socket,
                 result_for_app,
             )))
         }),
@@ -126,6 +134,8 @@ struct PickerApp {
     /// to measure index tokens and wrapped label heights.
     body_size: f32,
     mono_size: f32,
+    /// Daemon IPC endpoint for live edits (delete); `None` disables them.
+    socket: Option<std::path::PathBuf>,
     filter: String,
     selected: usize,
     /// Selection the auto-scroll last centered on (`usize::MAX` initially).
@@ -141,6 +151,7 @@ impl PickerApp {
         decoded: Vec<Option<DecodedThumb>>,
         wrap_labels: bool,
         body_size: f32,
+        socket: Option<std::path::PathBuf>,
         result: Arc<Mutex<Option<ShowResponse>>>,
     ) -> Self {
         let thumbs = decoded
@@ -162,7 +173,8 @@ impl PickerApp {
             thumbs,
             wrap_labels,
             body_size,
-            mono_size: (body_size - 2.0).max(1.0),
+            mono_size: theme::mono_size(body_size),
+            socket,
             filter: String::new(),
             selected: 0,
             scrolled_for: usize::MAX,
@@ -187,93 +199,99 @@ impl PickerApp {
         self.ctx.send_viewport_cmd(egui::ViewportCommand::Close);
     }
 
-    /// Height of one row: driven by its text (line count, or the measured
-    /// wrapped height when `wrap_labels` is set), never smaller than its
-    /// thumbnail, padded for breathing room.
-    fn row_height(&self, ui: &egui::Ui, index: usize) -> f32 {
-        let line_h = ui.text_style_height(&egui::TextStyle::Body);
-        let text_h = if self.wrap_labels {
-            self.wrapped_label_height(ui, index).max(line_h)
-        } else {
-            self.rows[index].label.lines().count().max(1) as f32 * line_h
-        };
-        let thumb_h = self.thumbs[index]
-            .as_ref()
-            .map_or(0.0, |_| theme::THUMB_HEIGHT);
-        text_h.max(thumb_h) + theme::ROW_PADDING
+    /// Search field pinned to the top; a launcher window lives and dies by
+    /// it, so the caret is re-claimed every frame.
+    fn filter_bar(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.label("🔍");
+            let filter_response = ui.add(
+                egui::TextEdit::singleline(&mut self.filter)
+                    .hint_text("filter…")
+                    .desired_width(f32::INFINITY),
+            );
+            if !filter_response.has_focus() {
+                filter_response.request_focus();
+            }
+        });
+        ui.separator();
     }
 
-    /// Width left for the label once the index token, optional thumbnail
-    /// and the gaps between them have claimed their share of the row.
-    fn label_max_width(&self, ui: &egui::Ui, index: usize) -> f32 {
-        let mut w = ui.available_width()
-            - index_token_width(ui, &self.rows[index].index_token, self.mono_size);
-        if let Some(thumb) = &self.thumbs[index] {
-            w -= thumb_display_size(thumb.native).x;
+    /// Drop the focused entry from the list and ask the daemon to delete
+    /// it, keeping the window open. The IPC call runs fire-and-forget on a
+    /// background thread so the UI never blocks; failures surface on
+    /// stderr only.
+    fn delete_selected(&mut self) {
+        if self.rows.is_empty() {
+            return;
         }
-        let gaps = if self.thumbs[index].is_some() {
-            2.0
+        let id = self.rows[self.selected].id;
+        self.rows.remove(self.selected);
+        self.thumbs.remove(self.selected);
+        self.selected = if self.rows.is_empty() {
+            0
         } else {
-            1.0
+            self.selected.min(self.rows.len() - 1)
         };
-        (w - theme::COLUMN_GAP * gaps).max(0.0)
+        // Force the auto-scroll to re-center on the new focused row.
+        self.scrolled_for = usize::MAX;
+
+        if let Some(socket) = self.socket.clone() {
+            std::thread::Builder::new()
+                .name("delete-entry".into())
+                .spawn(move || {
+                    if let Err(e) = crate::ipc::delete_entry(&socket, id) {
+                        eprintln!("cliphistory: deleting entry {id} failed: {e:#}");
+                    }
+                })
+                .ok();
+        }
     }
 
-    /// Rendered height of the label soft-wrapped at its share of the
-    /// window width.
-    fn wrapped_label_height(&self, ui: &egui::Ui, index: usize) -> f32 {
-        let max_w = self.label_max_width(ui, index);
-        let font = egui::FontId::proportional(self.body_size);
-        let text = self.rows[index].label.clone();
-        ui.ctx().fonts(|fonts| {
-            let job = egui::text::LayoutJob::simple(text, font, egui::Color32::WHITE, max_w);
-            fonts.layout_job(job).size().y
-        })
+    /// Text metrics handed to [`layout`] for row measurement.
+    fn metrics(&self) -> layout::TextMetrics {
+        layout::TextMetrics {
+            body_size: self.body_size,
+            mono_size: self.mono_size,
+            wrap_labels: self.wrap_labels,
+        }
     }
-}
 
-/// Intrinsic width of an index token in the monospace face.
-fn index_token_width(ui: &egui::Ui, token: &str, mono_size: f32) -> f32 {
-    ui.ctx().fonts(|fonts| {
-        fonts
-            .layout_no_wrap(
-                token.to_string(),
-                egui::FontId::monospace(mono_size),
-                egui::Color32::WHITE,
-            )
-            .size()
-            .x
-    })
-}
-
-/// Display size for a thumbnail: own aspect ratio, capped height, never
-/// upscaled.
-fn thumb_display_size(native: egui::Vec2) -> egui::Vec2 {
-    if native.y > theme::THUMB_HEIGHT {
-        egui::vec2(
-            native.x * (theme::THUMB_HEIGHT / native.y),
-            theme::THUMB_HEIGHT,
+    /// Height of one row, as computed by [`layout`].
+    fn row_height(&self, ui: &egui::Ui, index: usize) -> f32 {
+        layout::row_height(
+            ui,
+            &self.rows[index].label,
+            &self.rows[index].index_token,
+            self.thumbs[index].as_ref().map(|t| t.native),
+            self.metrics(),
         )
-    } else {
-        native
     }
 }
 
 impl eframe::App for PickerApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Keyboard: ↑/↓ move, Enter confirms, Esc dismisses. Typing always
-        // lands in the filter box (focus is re-requested every frame).
+        // Keyboard: ↑/↓ move, Enter confirms, Esc dismisses, Delete drops
+        // the focused entry (window stays open). Typing always lands in the
+        // filter box (focus is re-requested every frame).
         let up = ctx.input(|i| i.key_pressed(egui::Key::ArrowUp));
         let down = ctx.input(|i| i.key_pressed(egui::Key::ArrowDown));
-        let confirm = ctx.input(|i| i.key_pressed(egui::Key::Enter))
-            && !self.rows.is_empty();
+        let confirm = ctx.input(|i| i.key_pressed(egui::Key::Enter)) && !self.rows.is_empty();
         let dismiss = ctx.input(|i| i.key_pressed(egui::Key::Escape));
+        let delete = ctx.input(|i| i.key_pressed(egui::Key::Delete));
 
         let visible = self.visible();
         if visible.is_empty() {
+            // Nothing matches the filter — or the list ran dry after
+            // deletions; keep the window drawn so the state is visible,
+            // only closing remains meaningful.
             if confirm || dismiss {
                 self.finish(ShowResponse::Dismissed);
+                return;
             }
+            egui::CentralPanel::default().show(ctx, |ui| {
+                self.filter_bar(ui);
+                ui.weak("(nothing to show)");
+            });
             return;
         }
         if !visible.contains(&self.selected) {
@@ -294,6 +312,10 @@ impl eframe::App for PickerApp {
             self.finish(ShowResponse::Selected { id });
             return;
         }
+        if delete {
+            self.delete_selected();
+            return;
+        }
         if dismiss {
             self.finish(ShowResponse::Dismissed);
             return;
@@ -302,20 +324,7 @@ impl eframe::App for PickerApp {
         let selection_changed = self.scrolled_for != self.selected;
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.label("🔍");
-                let filter_response = ui.add(
-                    egui::TextEdit::singleline(&mut self.filter)
-                        .hint_text("filter…")
-                        .desired_width(f32::INFINITY),
-                );
-                // A launcher window lives and dies by its search field:
-                // keep the caret there no matter what.
-                if !filter_response.has_focus() {
-                    filter_response.request_focus();
-                }
-            });
-            ui.separator();
+            self.filter_bar(ui);
 
             egui::ScrollArea::both().auto_shrink(false).show(ui, |ui| {
                 let mut picked = None;
@@ -361,7 +370,7 @@ impl eframe::App for PickerApp {
                             if let Some(thumb) = &self.thumbs[i] {
                                 inner.add(egui::Image::new(egui::load::SizedTexture::new(
                                     thumb.handle.id(),
-                                    thumb_display_size(thumb.native),
+                                    layout::thumb_display_size(thumb.native),
                                 )));
                             }
                             inner.add(

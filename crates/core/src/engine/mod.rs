@@ -57,7 +57,7 @@ pub fn run(cfg: Config) -> Result<()> {
 
 fn run_inner(cfg: Config, socket_path: std::path::PathBuf) -> Result<()> {
     let db_path = cfg.storage.resolved_db_path();
-    let storage = Arc::new(Storage::open(&db_path)?);
+    let storage = Arc::new(Storage::open(&db_path, cfg.storage.max_cache_bytes)?);
     storage.prune_with_budget(
         cfg.storage.max_entries,
         cfg.storage.max_age_days,
