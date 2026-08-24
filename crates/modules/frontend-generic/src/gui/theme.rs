@@ -61,3 +61,8 @@ pub fn row_fill(selected: bool, hovered: bool) -> egui::Color32 {
 pub fn index_color() -> egui::Color32 {
     INDEX_COLOR
 }
+
+/// Outline drawn on the keyboard-focused per-row action button.
+pub fn focus_stroke() -> egui::Stroke {
+    egui::Stroke::new(1.5_f32, SELECTION)
+}

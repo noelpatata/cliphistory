@@ -9,12 +9,14 @@
 //! automatic vertical scrolling of the selection, multi-line entries sized
 //! to their line count (or to their wrapped height when the daemon asks
 //! for word wrap), thumbnails rendered at their native aspect ratio,
-//! Nerd Font glyph fallback, click to select, Delete to drop the
-//! focused entry through the daemon IPC while staying open, and a
+//! Nerd Font glyph fallback, click to select, per-entry pin/delete buttons
+//! reachable with →/← (plus Ctrl+P pin and Delete shortcuts), a
 //! double-confirmed clear-all (button or Ctrl+Delete) that keeps pinned
-//! entries.
+//! entries — all edits go through the daemon IPC while the window stays
+//! open.
 
 mod fonts;
+mod keys;
 mod layout;
 mod theme;
 
@@ -25,8 +27,20 @@ use std::time::{Duration, Instant};
 
 /// How long the clear-all confirmation stays armed before disarming.
 const CLEAR_CONFIRM_WINDOW: Duration = Duration::from_secs(3);
-/// Width reserved in the filter bar for the clear-all button.
-const CLEAR_BUTTON_RESERVE: f32 = 96.0;
+/// Width reserved in the filter bar for the clear-all button plus its
+/// breathing room from the window edge.
+const CLEAR_BUTTON_RESERVE: f32 = 120.0;
+/// Width of one square icon button in a row's action cluster.
+const ACTION_BUTTON_SIZE: f32 = 24.0;
+
+/// What part of the selected row has keyboard focus. `→` walks
+/// Row → Pin → Delete → Row; `←` walks back.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RowAction {
+    Row,
+    Pin,
+    Delete,
+}
 
 /// One selectable history entry as the GUI needs it.
 struct Row {
@@ -121,6 +135,17 @@ pub fn pick(req: &ShowRequest, socket: Option<std::path::PathBuf>) -> Result<Sho
     }
 }
 
+/// A square glyph button for a row's action cluster; `focused` draws the
+/// keyboard-focus outline.
+fn action_button(glyph: egui::RichText, focused: bool) -> egui::Button<'static> {
+    let mut button =
+        egui::Button::new(glyph).min_size(egui::vec2(ACTION_BUTTON_SIZE, ACTION_BUTTON_SIZE));
+    if focused {
+        button = button.stroke(theme::focus_stroke());
+    }
+    button
+}
+
 /// Decode a cached thumbnail PNG at its original aspect ratio — no
 /// rescaling, no letterboxing; display sizing happens at draw time and GPU
 /// upload once a context exists.
@@ -151,6 +176,8 @@ struct PickerApp {
     socket: Option<std::path::PathBuf>,
     /// When the clear-all confirmation was armed, if it is armed.
     clear_armed_at: Option<Instant>,
+    /// Which part of the selected row keyboard focus is on.
+    focused_action: RowAction,
     filter: String,
     selected: usize,
     /// Selection the auto-scroll last centered on (`usize::MAX` initially).
@@ -191,6 +218,7 @@ impl PickerApp {
             mono_size: theme::mono_size(body_size),
             socket,
             clear_armed_at: None,
+            focused_action: RowAction::Row,
             filter: String::new(),
             selected: 0,
             scrolled_for: usize::MAX,
@@ -251,21 +279,29 @@ impl PickerApp {
     }
 
     /// Drop the focused entry from the list and ask the daemon to delete
-    /// it, keeping the window open. The IPC call runs fire-and-forget on a
-    /// background thread so the UI never blocks; failures surface on
-    /// stderr only.
+    /// it, keeping the window open.
     fn delete_selected(&mut self) {
-        if self.rows.is_empty() {
+        let index = self.selected;
+        self.delete_at(index);
+    }
+
+    /// Delete the entry at `index`: remove it from the local list (rows
+    /// and thumbs in lockstep), renumber, and fire a background IPC so the
+    /// UI never blocks; failures surface on stderr only.
+    fn delete_at(&mut self, index: usize) {
+        if index >= self.rows.len() {
             return;
         }
-        let id = self.rows[self.selected].id;
-        self.rows.remove(self.selected);
-        self.thumbs.remove(self.selected);
+        let id = self.rows[index].id;
+        self.rows.remove(index);
+        self.thumbs.remove(index);
         self.selected = if self.rows.is_empty() {
             0
         } else {
             self.selected.min(self.rows.len() - 1)
         };
+        // Structural change: action focus no longer points anywhere sane.
+        self.focused_action = RowAction::Row;
         // Force the auto-scroll to re-center on the new focused row.
         self.scrolled_for = usize::MAX;
         self.renumber();
@@ -276,6 +312,30 @@ impl PickerApp {
                 .spawn(move || {
                     if let Err(e) = crate::ipc::delete_entry(&socket, id) {
                         eprintln!("cliphistory: deleting entry {id} failed: {e:#}");
+                    }
+                })
+                .ok();
+        }
+    }
+
+    /// Flip the pin state of the entry at `index` locally, then persist it
+    /// through the daemon in the background.
+    ///
+    /// Note: the daemon sorts pinned entries first, so the list order here
+    /// refreshes on the next picker opening.
+    fn toggle_pin_at(&mut self, index: usize) {
+        let Some(row) = self.rows.get_mut(index) else {
+            return;
+        };
+        row.pinned = !row.pinned;
+        let (id, pinned) = (row.id, row.pinned);
+
+        if let Some(socket) = self.socket.clone() {
+            std::thread::Builder::new()
+                .name("set-pinned".into())
+                .spawn(move || {
+                    if let Err(e) = crate::ipc::set_pinned(&socket, id, pinned) {
+                        eprintln!("cliphistory: pinning entry {id} failed: {e:#}");
                     }
                 })
                 .ok();
@@ -354,19 +414,21 @@ impl PickerApp {
 
 impl eframe::App for PickerApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Keyboard: ↑/↓ move, Enter confirms, Esc dismisses, Delete drops
-        // the focused entry, Ctrl+Delete clears all unpinned (asked twice).
-        // Typing always lands in the filter box (focus is re-requested
-        // every frame).
-        let up = ctx.input(|i| i.key_pressed(egui::Key::ArrowUp));
-        let down = ctx.input(|i| i.key_pressed(egui::Key::ArrowDown));
-        let confirm = ctx.input(|i| i.key_pressed(egui::Key::Enter)) && !self.rows.is_empty();
-        let dismiss = ctx.input(|i| i.key_pressed(egui::Key::Escape));
-        let (delete, clear_all) = ctx.input(|i| {
-            let del = i.key_pressed(egui::Key::Delete);
-            let ctrl = i.modifiers.ctrl;
-            (del && !ctrl, del && ctrl)
-        });
+        // Keyboard: ↑/↓ move, Enter confirms (or runs the focused per-row
+        // action), →/← walk row → pin → delete, Esc dismisses, Delete
+        // drops the focused entry, Ctrl+P pins it, Ctrl+Delete clears all
+        // unpinned (asked twice). Typing always lands in the filter box
+        // (focus is re-requested every frame); all bindings live in
+        // [`keys`].
+        let up = keys::pressed(ctx, &keys::MOVE_UP);
+        let down = keys::pressed(ctx, &keys::MOVE_DOWN);
+        let confirm = keys::pressed(ctx, &keys::CONFIRM) && !self.rows.is_empty();
+        let dismiss = keys::pressed(ctx, &keys::DISMISS);
+        let delete = keys::pressed(ctx, &keys::DELETE_ENTRY);
+        let clear_all = keys::pressed(ctx, &keys::CLEAR_ALL);
+        let toggle_pin = keys::pressed(ctx, &keys::TOGGLE_PIN);
+        let action_next = keys::pressed(ctx, &keys::ACTION_NEXT);
+        let action_prev = keys::pressed(ctx, &keys::ACTION_PREV);
 
         // An armed confirmation expires on its own.
         if let Some(at) = self.clear_armed_at {
@@ -401,11 +463,36 @@ impl eframe::App for PickerApp {
                     (pos + 1).min(visible.len() - 1)
                 };
                 self.selected = visible[next];
+                self.focused_action = RowAction::Row;
             }
         }
+        if action_next {
+            self.focused_action = match self.focused_action {
+                RowAction::Row => RowAction::Pin,
+                RowAction::Pin => RowAction::Delete,
+                RowAction::Delete => RowAction::Row,
+            };
+        }
+        if action_prev {
+            self.focused_action = match self.focused_action {
+                RowAction::Row => RowAction::Delete,
+                RowAction::Delete => RowAction::Pin,
+                RowAction::Pin => RowAction::Row,
+            };
+        }
         if confirm {
-            let id = self.rows[self.selected].id;
-            self.finish(ShowResponse::Selected { id });
+            match self.focused_action {
+                RowAction::Row => {
+                    let id = self.rows[self.selected].id;
+                    self.finish(ShowResponse::Selected { id });
+                    return;
+                }
+                RowAction::Pin => self.toggle_pin_at(self.selected),
+                RowAction::Delete => self.delete_selected(),
+            }
+        }
+        if toggle_pin {
+            self.toggle_pin_at(self.selected);
             return;
         }
         if delete {
@@ -417,8 +504,13 @@ impl eframe::App for PickerApp {
             return;
         }
         if dismiss {
-            self.finish(ShowResponse::Dismissed);
-            return;
+            // Esc backs out of the per-row actions before closing.
+            if self.focused_action != RowAction::Row {
+                self.focused_action = RowAction::Row;
+            } else {
+                self.finish(ShowResponse::Dismissed);
+                return;
+            }
         }
 
         let selection_changed = self.scrolled_for != self.selected;
@@ -428,6 +520,8 @@ impl eframe::App for PickerApp {
 
             egui::ScrollArea::both().auto_shrink(false).show(ui, |ui| {
                 let mut picked = None;
+                let mut pin_req = None;
+                let mut delete_req = None;
                 for &i in &visible {
                     let row_id = self.rows[i].id;
                     let selected = i == self.selected;
@@ -485,8 +579,57 @@ impl eframe::App for PickerApp {
                         },
                     );
 
-                    if hitbox.clicked() {
+                    // Per-entry actions anchored at the row's right edge:
+                    // full buttons on the selected/hovered row, a passive
+                    // pin marker otherwise. Focus ring follows →/← keys.
+                    let show_actions = selected || hitbox.hovered();
+                    let mut pin_clicked = false;
+                    let mut delete_clicked = false;
+                    let pinned = self.rows[i].pinned;
+                    if show_actions || pinned {
+                        let pin_focused = selected && self.focused_action == RowAction::Pin;
+                        let delete_focused = selected && self.focused_action == RowAction::Delete;
+                        ui.allocate_new_ui(
+                            egui::UiBuilder::new()
+                                .max_rect(rect)
+                                .layout(egui::Layout::right_to_left(egui::Align::Center))
+                                .id_salt(("cliphistory-row-actions", i)),
+                            |actions| {
+                                actions.style_mut().spacing.item_spacing.x =
+                                    theme::COLUMN_GAP / 2.0;
+                                actions.add_space(theme::ROW_PADDING);
+                                if show_actions {
+                                    let delete_btn =
+                                        action_button(egui::RichText::new("🗑"), delete_focused);
+                                    let del = actions.add(delete_btn);
+                                    delete_clicked |= del.clicked();
+
+                                    let pin_glyph = if pinned {
+                                        egui::RichText::new("📌")
+                                    } else {
+                                        egui::RichText::new("📌").weak()
+                                    };
+                                    let pin = actions.add(action_button(pin_glyph, pin_focused));
+                                    pin_clicked |= pin.clicked();
+                                } else {
+                                    actions.label(
+                                        egui::RichText::new("📌").color(theme::index_color()),
+                                    );
+                                }
+                            },
+                        );
+                    }
+
+                    if hitbox.clicked() && !pin_clicked && !delete_clicked {
                         picked = Some(row_id);
+                    }
+                    // Defer mutations until the loop is done: deleting or
+                    // reordering rows mid-iteration would shift indices.
+                    if pin_clicked {
+                        pin_req = Some(i);
+                    }
+                    if delete_clicked {
+                        delete_req = Some(i);
                     }
                     // Follow keyboard selection: center it once per change,
                     // both axes, leaving mouse-wheel scrolling alone.
@@ -505,6 +648,13 @@ impl eframe::App for PickerApp {
                 }
                 if let Some(id) = picked {
                     self.finish(ShowResponse::Selected { id });
+                }
+                // Apply deferred row-button actions once iteration is done.
+                if let Some(i) = pin_req {
+                    self.toggle_pin_at(i);
+                }
+                if let Some(i) = delete_req {
+                    self.delete_at(i);
                 }
             });
         });
