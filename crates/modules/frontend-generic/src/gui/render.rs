@@ -335,7 +335,10 @@ impl PickerApp {
                     .hint_text("filter…")
                     .desired_width(ui.available_width() - CLEAR_BUTTON_RESERVE),
             );
-            if !filter_response.has_focus() {
+            // Reclaim focus only when nothing else has it (first frame or
+            // after a widget was removed). Respects Tab navigation.
+            let anything_focused = ui.memory(|m| m.focused().is_some());
+            if !anything_focused && !filter_response.has_focus() {
                 filter_response.request_focus();
             }
             self.clear_all_button(ui);

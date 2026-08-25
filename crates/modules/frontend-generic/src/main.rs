@@ -32,10 +32,12 @@ fn main() -> std::process::ExitCode {
     if args.iter().any(|a| a == "--manifest") {
         return mcommon::manifest_main(manifest);
     }
+    mcommon::init_logging();
 
     match run() {
         Ok(code) => code,
         Err(e) => {
+            log::error!("frontend error: {e:#}");
             eprintln!("error: {e:#}");
             std::process::ExitCode::FAILURE
         }
@@ -44,7 +46,13 @@ fn main() -> std::process::ExitCode {
 
 fn run() -> Result<std::process::ExitCode> {
     let req = ipc::read_request()?;
+    log::debug!(
+        "frontend spawned: {} entries, socket={}",
+        req.entries.len(),
+        ipc::socket_from_env().is_some()
+    );
     let resp = gui::pick(&req, ipc::socket_from_env())?;
+    log::info!("frontend finished: {resp:?}");
     println!("{}", serde_json::to_string(&resp)?);
     Ok(std::process::ExitCode::SUCCESS)
 }

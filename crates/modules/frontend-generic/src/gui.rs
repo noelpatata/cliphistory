@@ -79,6 +79,11 @@ pub fn pick(req: &ShowRequest, socket: Option<std::path::PathBuf>) -> Result<Sho
         viewport: egui::ViewportBuilder::default()
             .with_title("cliphistory")
             .with_inner_size([560.0, 520.0]),
+        // Disabling vsync: on Wayland, vsync waits for a compositor frame
+        // callback that never fires when the surface is hidden (workspace
+        // switch), blocking the main thread and triggering the
+        // compositor's "not responding" detection.
+        vsync: false,
         ..Default::default()
     };
 
@@ -98,6 +103,11 @@ pub fn pick(req: &ShowRequest, socket: Option<std::path::PathBuf>) -> Result<Sho
         }),
     )
     .map_err(|e| anyhow::anyhow!("starting embedded GUI: {e}"))?;
+
+    log::info!(
+        "picker window closed; response={}",
+        serde_json::to_string(result.lock().expect("picker result lock").as_ref().unwrap_or(&ShowResponse::Dismissed)).unwrap_or_default()
+    );
 
     let taken = result.lock().expect("picker result lock").take();
     match taken {
