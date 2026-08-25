@@ -10,22 +10,31 @@ use super::model::{FocusSource, RowAction};
 use crate::gui::{keys, theme};
 use cliphistory_proto::ShowResponse;
 
-/// Width reserved in the filter bar for the clear-all button plus its
-/// breathing room from the window edge.
-const CLEAR_BUTTON_RESERVE: f32 = 120.0;
-/// Width of one square icon button in a row's action cluster.
-const ACTION_BUTTON_SIZE: f32 = 24.0;
-/// Corner radius of an action button.
-const ACTION_BUTTON_RADIUS: f32 = 6.0;
-/// Glyph size inside action buttons.
-const ACTION_GLYPH_SIZE: f32 = 14.0;
+/// Width reserved in the filter bar for the clear-all button, the gap
+/// before it, and right-edge padding. Scales with font size.
+fn clear_button_reserve(body_size: f32) -> f32 {
+    let scale = body_size / 16.0;
+    (120.0 + 12.0) * scale
+}
+/// Scaled width of one square icon button in a row's action cluster.
+fn action_button_size(body_size: f32) -> f32 {
+    24.0 * body_size / 16.0
+}
+/// Scaled corner radius of an action button.
+fn action_button_radius(body_size: f32) -> f32 {
+    6.0 * body_size / 16.0
+}
+/// Scaled glyph size inside action buttons.
+fn action_glyph_size(body_size: f32) -> f32 {
+    14.0 * body_size / 16.0
+}
 /// Characters used as icons; probed once against the loaded fonts.
 const UI_ICONS: &[char] = &['🔍', '🗑', '📌', '❗'];
 
 /// True when every icon character is renderable by the loaded font chain.
 pub(crate) fn icons_render(ctx: &egui::Context) -> bool {
     ctx.fonts(|fonts| {
-        let font = egui::FontId::proportional(ACTION_GLYPH_SIZE);
+        let font = egui::FontId::proportional(14.0);
         UI_ICONS.iter().all(|&c| fonts.has_glyph(&font, c))
     })
 }
@@ -249,6 +258,7 @@ impl eframe::App for PickerApp {
                                 if show_actions {
                                     let del = action_button(
                                         actions,
+                                        self.body_size,
                                         if self.icons_ok { "🗑" } else { "X" },
                                         false,
                                         delete_focused,
@@ -261,6 +271,7 @@ impl eframe::App for PickerApp {
                                     // dark glyph = visible pin indicator.
                                     let pin = action_button(
                                         actions,
+                                        self.body_size,
                                         if self.icons_ok { "📌" } else { "P" },
                                         !pinned,
                                         pin_focused,
@@ -333,7 +344,7 @@ impl PickerApp {
             let filter_response = ui.add(
                 egui::TextEdit::singleline(&mut self.filter)
                     .hint_text("filter…")
-                    .desired_width(ui.available_width() - CLEAR_BUTTON_RESERVE),
+                    .desired_width(ui.available_width() - clear_button_reserve(self.body_size)),
             );
             // Reclaim focus only when nothing else has it (first frame or
             // after a widget was removed). Respects Tab navigation.
@@ -379,14 +390,16 @@ impl PickerApp {
 /// at a glance.
 fn action_button(
     ui: &mut egui::Ui,
+    body_size: f32,
     glyph: &str,
     dimmed: bool,
     keyboard_focused: bool,
     fg_override: Option<egui::Color32>,
     inverted: bool,
 ) -> egui::Response {
+    let size = action_button_size(body_size);
     let (rect, resp) = ui.allocate_exact_size(
-        egui::vec2(ACTION_BUTTON_SIZE, ACTION_BUTTON_SIZE),
+        egui::vec2(size, size),
         egui::Sense::all(),
     );
     let active = keyboard_focused || resp.hovered();
@@ -402,9 +415,10 @@ fn action_button(
     } else {
         egui::Stroke::NONE
     };
-    ui.painter().rect_filled(rect, ACTION_BUTTON_RADIUS, bg);
+    let radius = action_button_radius(body_size);
+    ui.painter().rect_filled(rect, radius, bg);
     ui.painter()
-        .rect_stroke(rect, ACTION_BUTTON_RADIUS, stroke, egui::StrokeKind::Inside);
+        .rect_stroke(rect, radius, stroke, egui::StrokeKind::Inside);
     // On the light inverted fill, always use a dark glyph for contrast.
     let glyph_color = if inverted && !active {
         theme::PINNED_TEXT
@@ -417,7 +431,7 @@ fn action_button(
         rect.center(),
         egui::Align2::CENTER_CENTER,
         glyph,
-        egui::FontId::proportional(ACTION_GLYPH_SIZE),
+        egui::FontId::proportional(action_glyph_size(body_size)),
         glyph_color,
     );
     resp

@@ -24,7 +24,7 @@ pub(crate) fn sync_history(socket: std::path::PathBuf, tx: Sender<Vec<HistoryIte
             Ok(mut stream) => {
                 failures = 0;
                 let mut last = None::<u64>;
-                while let Some(msg) = stream.next() {
+                for msg in stream.by_ref() {
                     match msg {
                         Ok(items) => {
                             let fp = fingerprint(&items);

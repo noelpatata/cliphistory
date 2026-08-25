@@ -75,10 +75,14 @@ pub fn pick(req: &ShowRequest, socket: Option<std::path::PathBuf>) -> Result<Sho
             .ok();
     }
 
+    let font_scale = req.view.font_size as f32 / 16.0;
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("cliphistory")
-            .with_inner_size([560.0, 520.0]),
+            .with_inner_size([
+                (560.0 * font_scale).round(),
+                (520.0 * font_scale).round(),
+            ]),
         // Disabling vsync: on Wayland, vsync waits for a compositor frame
         // callback that never fires when the surface is hidden (workspace
         // switch), blocking the main thread and triggering the

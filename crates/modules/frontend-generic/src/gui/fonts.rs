@@ -25,7 +25,10 @@ const MAX_SCAN_DEPTH: usize = 4;
 
 /// Resolve `configured` (family name or file path) and install it as the
 /// primary text font. When it is `None` or cannot be resolved, fall back to
-/// auto-detecting an installed Nerd Font as glyph-only support.
+/// auto-detecting an installed Nerd Font as glyph-only support. An
+/// auto-detected Nerd Font is *always* appended as a last-resort glyph
+/// fallback, even when a primary font is configured, so icons survive
+/// plain-text typeface choices.
 pub fn install(ctx: &egui::Context, configured: Option<&str>) {
     let mut fonts = egui::FontDefinitions::default();
     let mut have_primary = false;
@@ -42,13 +45,13 @@ pub fn install(ctx: &egui::Context, configured: Option<&str>) {
             ),
         }
     }
-    if !have_primary {
-        // Unset or unresolvable choice: keep default typefaces and merely
-        // cover private-use-area glyphs with an auto-detected Nerd Font.
-        if let Some((bytes, _)) = detect_nerd_font() {
-            register(&mut fonts, FALLBACK_KEY, bytes, false);
-        }
+    // Always try to add a Nerd Font as glyph fallback — for icon coverage
+    // when the primary font is plain (e.g. "Sans Serif"), or as the only
+    // extra when no primary was configured.
+    if let Some((bytes, _)) = detect_nerd_font() {
+        register(&mut fonts, FALLBACK_KEY, bytes, false);
     }
+    let _ = have_primary;
     ctx.set_fonts(fonts);
 }
 
