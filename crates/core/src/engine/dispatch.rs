@@ -4,6 +4,7 @@
 
 use super::actions;
 use super::report;
+use super::show_view;
 use super::Shared;
 use crate::ipc::{IpcRequest, IpcResponse};
 use std::io::{BufRead, BufReader, Write};
@@ -89,6 +90,15 @@ fn serve_history_watch(st: &Shared, writer: &UnixStream) {
     // Wake the new subscriber right away with the current state.
     let _ = tx.send(());
 
+    let view = cliphistory_proto::ViewOptions {
+        max_preview_lines: st.cfg.frontend.max_preview_lines,
+        font_family: st.cfg.frontend.font_family.clone(),
+        word_wrap: st.cfg.frontend.word_wrap,
+        font_size: st.cfg.frontend.font_size,
+        keys: st.cfg.frontend.keys.clone(),
+        window_width: st.cfg.frontend.window_width,
+    };
+
     let mut writer = match writer.try_clone() {
         Ok(w) => w,
         Err(_) => return, // registry entry is pruned by its dead receiver.
@@ -98,7 +108,20 @@ fn serve_history_watch(st: &Shared, writer: &UnixStream) {
             .storage
             .history_items(Some(crate::constants::SHOW_ENTRIES_LIMIT), None)
         {
-            Ok(items) => IpcResponse::History { items },
+            Ok(items) => {
+                let head_of = |id| {
+                    st.storage
+                        .content_head(id, show_view::PREVIEW_HEAD_BYTES)
+                        .ok()
+                        .flatten()
+                        .filter(|h| h.kind == "text")
+                        .map(|h| h.text)
+                };
+                let request = show_view::build_request(items, view.clone(), &head_of);
+                IpcResponse::History {
+                    items: request.entries,
+                }
+            }
             Err(e) => err_resp(e),
         };
         if respond(&mut writer, resp).is_err() {

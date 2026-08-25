@@ -69,6 +69,10 @@ pub struct ViewOptions {
     /// Configurable key bindings for the picker.
     #[serde(default)]
     pub keys: KeyBindings,
+    /// Base window width (px) before font-size scaling. `0` falls back to
+    /// [`DEFAULT_WINDOW_WIDTH`].
+    #[serde(default = "default_window_width")]
+    pub window_width: u32,
 }
 
 impl Default for ViewOptions {
@@ -79,6 +83,7 @@ impl Default for ViewOptions {
             word_wrap: false,
             font_size: DEFAULT_FONT_SIZE,
             keys: KeyBindings::default(),
+            window_width: DEFAULT_WINDOW_WIDTH,
         }
     }
 }
@@ -88,6 +93,13 @@ pub const DEFAULT_MAX_PREVIEW_LINES: usize = 8;
 
 /// Body text size used when a request carries no explicit `font_size`.
 pub const DEFAULT_FONT_SIZE: u32 = 16;
+
+/// Default base window width (px) before font-size scaling.
+pub const DEFAULT_WINDOW_WIDTH: u32 = 560;
+
+fn default_window_width() -> u32 {
+    DEFAULT_WINDOW_WIDTH
+}
 
 /// Configurable key bindings for the picker frontend.
 ///
@@ -239,6 +251,7 @@ mod tests {
                 word_wrap: true,
                 font_size: 18,
                 keys: KeyBindings::default(),
+                window_width: 700,
             },
         };
         let json = serde_json::to_string(&req).unwrap();

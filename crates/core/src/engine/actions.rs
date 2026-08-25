@@ -125,6 +125,7 @@ pub(crate) fn do_show(st: &Shared) -> IpcResponse {
         word_wrap: st.cfg.frontend.word_wrap,
         font_size: st.cfg.frontend.font_size,
         keys: st.cfg.frontend.keys.clone(),
+        window_width: st.cfg.frontend.window_width,
     };
     let head_of = |id| {
         st.storage

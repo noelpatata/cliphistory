@@ -76,11 +76,16 @@ pub fn pick(req: &ShowRequest, socket: Option<std::path::PathBuf>) -> Result<Sho
     }
 
     let font_scale = req.view.font_size as f32 / 16.0;
+    let base_width = if req.view.window_width > 0 {
+        req.view.window_width as f32
+    } else {
+        cliphistory_proto::DEFAULT_WINDOW_WIDTH as f32
+    };
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("cliphistory")
             .with_inner_size([
-                (560.0 * font_scale).round(),
+                (base_width * font_scale).round(),
                 (520.0 * font_scale).round(),
             ]),
         // Disabling vsync: on Wayland, vsync waits for a compositor frame

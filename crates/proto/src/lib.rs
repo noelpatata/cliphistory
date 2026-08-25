@@ -47,6 +47,7 @@ pub use content::{human_size, Content};
 pub use frames::{
     ClipboardToHost, HostToClipboard, HostToPaster, KeyBindings, PasterToHost, ShowRequest,
     ShowResponse, ViewOptions, DEFAULT_FONT_SIZE, DEFAULT_MAX_PREVIEW_LINES,
+    DEFAULT_WINDOW_WIDTH,
 };
 pub use history::HistoryItem;
 pub use ipc::{

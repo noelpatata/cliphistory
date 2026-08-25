@@ -199,6 +199,7 @@ versions as `local`, and never touches the network.
 | `font_family`       | string           | *(unset)* | Font used by the picker: any **installed font family name** (e.g. `"JetBrainsMono Nerd Font"`) or a direct path to a `.ttf`/`.otf`. Resolution tries the path, then fontconfig (`fc-list`), then a filename scan. When set, that face renders all text (built-ins stay as glyph fallback); unset → default fonts plus an auto-detected Nerd Font covering private-use glyphs (shell-prompt icons). |
 | `word_wrap`         | bool             | `false` | Soft-wrap long preview lines at the picker window's right edge so the full text stays visible without horizontal scrolling (rows grow taller to fit). `false` keeps lines on one row each, extending past the viewport behind a horizontal scrollbar. |
 | `font_size`         | integer          | `16`    | Base text size (px) of the picker; the monospace style (index tokens) stays 2 px smaller. Applies to all picker text, including any configured `font_family`. |
+| `window_width`      | integer          | `0`     | Base window width (px) before font-size scaling. The actual width is `window_width × (font_size ÷ 16)`. `0` uses the compiled default (560 px). |
 | `[frontend.keys]`   | table            | *(see defaults)* | Configurable key bindings for the picker. Each value is a key name (lowercase), optionally prefixed with `ctrl+`. Supported names: `enter`, `escape`, `delete`, `backspace`, `tab`, `insert`, `home`, `end`, `page_up`, `page_down`, `space`, `arrow_up/down/left/right` (or `up`/`down`/`left`/`right`), or single letters `a`–`z`. |
 
 **Key binding defaults:**
@@ -222,6 +223,7 @@ max_preview_lines = 8
 # font_family = "Symbols Nerd Font"
 word_wrap = false
 font_size = 16
+window_width = 0
 
 [frontend.keys]
 move_up = "arrow_up"
