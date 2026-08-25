@@ -49,6 +49,8 @@ pub(crate) struct PickerApp {
     /// lazily on first frame (`Context::fonts` panics before first run).
     pub icons_ok: bool,
     pub fonts_probed: bool,
+    /// Resolved key bindings from the daemon's config.
+    pub bindings: crate::gui::keys::Resolved,
     pub filter: String,
     pub selected: usize,
     /// Selection the auto-scroll last centered on (`usize::MAX` initially).
@@ -63,6 +65,7 @@ impl PickerApp {
         snapshot: PickerSnapshot,
         socket: Option<std::path::PathBuf>,
         updates: Receiver<Vec<HistoryItem>>,
+        keys: crate::gui::keys::Resolved,
         result: Arc<Mutex<Option<ShowResponse>>>,
     ) -> Self {
         let PickerSnapshot {
@@ -99,6 +102,7 @@ impl PickerApp {
             last_cursor: None,
             icons_ok: true,
             fonts_probed: false,
+            bindings: keys,
             filter: String::new(),
             selected: 0,
             scrolled_for: usize::MAX,

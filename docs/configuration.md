@@ -199,6 +199,21 @@ versions as `local`, and never touches the network.
 | `font_family`       | string           | *(unset)* | Font used by the picker: any **installed font family name** (e.g. `"JetBrainsMono Nerd Font"`) or a direct path to a `.ttf`/`.otf`. Resolution tries the path, then fontconfig (`fc-list`), then a filename scan. When set, that face renders all text (built-ins stay as glyph fallback); unset → default fonts plus an auto-detected Nerd Font covering private-use glyphs (shell-prompt icons). |
 | `word_wrap`         | bool             | `false` | Soft-wrap long preview lines at the picker window's right edge so the full text stays visible without horizontal scrolling (rows grow taller to fit). `false` keeps lines on one row each, extending past the viewport behind a horizontal scrollbar. |
 | `font_size`         | integer          | `16`    | Base text size (px) of the picker; the monospace style (index tokens) stays 2 px smaller. Applies to all picker text, including any configured `font_family`. |
+| `[frontend.keys]`   | table            | *(see defaults)* | Configurable key bindings for the picker. Each value is a key name (lowercase), optionally prefixed with `ctrl+`. Supported names: `enter`, `escape`, `delete`, `backspace`, `tab`, `insert`, `home`, `end`, `page_up`, `page_down`, `space`, `arrow_up/down/left/right` (or `up`/`down`/`left`/`right`), or single letters `a`–`z`. |
+
+**Key binding defaults:**
+
+| Binding | Default | Action |
+|---------|---------|--------|
+| `move_up` | `arrow_up` | Move selection up |
+| `move_down` | `arrow_down` | Move selection down |
+| `confirm` | `enter` | Paste selected entry / activate focused button |
+| `dismiss` | `escape` | Close the picker (backs out of button focus first) |
+| `delete_entry` | `delete` | Delete the focused entry |
+| `clear_all` | `ctrl+delete` | Clear every unpinned entry (press twice to confirm) |
+| `toggle_pin` | `ctrl+p` | Pin/unpin the focused entry |
+| `action_next` | `arrow_right` | Move focus to next per-row action button |
+| `action_prev` | `arrow_left` | Move focus back from per-row action buttons |
 
 ```toml
 [frontend]
@@ -207,6 +222,17 @@ max_preview_lines = 8
 # font_family = "Symbols Nerd Font"
 word_wrap = false
 font_size = 16
+
+[frontend.keys]
+move_up = "arrow_up"
+move_down = "arrow_down"
+confirm = "enter"
+dismiss = "escape"
+delete_entry = "delete"
+clear_all = "ctrl+delete"
+toggle_pin = "ctrl+p"
+action_next = "arrow_right"
+action_prev = "arrow_left"
 ```
 
 Per-invocation extras also work without touching config: anything after

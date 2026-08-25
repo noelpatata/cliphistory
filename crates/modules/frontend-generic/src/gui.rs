@@ -98,6 +98,7 @@ pub fn pick(req: &ShowRequest, socket: Option<std::path::PathBuf>) -> Result<Sho
                 snapshot,
                 socket,
                 update_rx,
+                keys::resolve(&req.view.keys),
                 result_for_app,
             )))
         }),
@@ -106,7 +107,14 @@ pub fn pick(req: &ShowRequest, socket: Option<std::path::PathBuf>) -> Result<Sho
 
     log::info!(
         "picker window closed; response={}",
-        serde_json::to_string(result.lock().expect("picker result lock").as_ref().unwrap_or(&ShowResponse::Dismissed)).unwrap_or_default()
+        serde_json::to_string(
+            result
+                .lock()
+                .expect("picker result lock")
+                .as_ref()
+                .unwrap_or(&ShowResponse::Dismissed)
+        )
+        .unwrap_or_default()
     );
 
     let taken = result.lock().expect("picker result lock").take();

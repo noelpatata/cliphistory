@@ -68,25 +68,6 @@ pub fn set_pinned(socket: &std::path::Path, id: i64, pinned: bool) -> Result<Str
     }
 }
 
-/// Fetch the current history (newest first, pinned on top) so the picker
-/// can refresh its list while it is open.
-pub fn history(socket: &std::path::Path, limit: usize) -> Result<Vec<HistoryItem>> {
-    let mut stream = UnixStream::connect(socket)
-        .with_context(|| format!("connecting to {}", socket.display()))?;
-    write_request(
-        &mut stream,
-        &IpcRequest::GetHistory {
-            limit: Some(limit),
-            query: None,
-        },
-    )?;
-    match read_response(&mut BufReader::new(stream))? {
-        IpcResponse::History { items } => Ok(items),
-        IpcResponse::Err { message } => Err(anyhow::anyhow!(message)),
-        other => Err(anyhow::anyhow!("unexpected daemon reply: {other:?}")),
-    }
-}
-
 /// A stream of history snapshots pushed by the daemon on every mutation.
 ///
 /// Created by [`subscribe_history`]; each item is one full snapshot

@@ -62,6 +62,20 @@ extra_args = []                 # e.g. ["-theme", "~/.config/rofi/cliphistory.ra
 max_preview_lines = 8           # lines shown per text entry in the picker; 0 = unlimited
 word_wrap = false               # wrap long lines at the window edge instead of scrolling sideways
 font_size = 16                  # base picker text size in px; monospace stays 2 px smaller
+
+[frontend.keys]
+# Key names: enter, escape, delete, backspace, tab, insert, home, end,
+# page_up, page_down, space, arrow_up/down/left/right (or up/down/left/right),
+# or single letters a-z. Prefix with ctrl+ for modifier combos.
+move_up = "arrow_up"
+move_down = "arrow_down"
+confirm = "enter"
+dismiss = "escape"
+delete_entry = "delete"
+clear_all = "ctrl+delete"
+toggle_pin = "ctrl+p"
+action_next = "arrow_right"
+action_prev = "arrow_left"
 # font_family = "JetBrainsMono Nerd Font"  # any installed font, by family name or file path; empty = default + Nerd Font fallback
 "#,
             app = c::APP_NAME,

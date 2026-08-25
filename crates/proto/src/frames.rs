@@ -29,7 +29,9 @@ pub enum HostToClipboard {
     Ping,
     Stop,
     /// Ask the reader to take ownership of the clipboard with this payload.
-    SetClipboard { content: Content },
+    SetClipboard {
+        content: Content,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -64,6 +66,9 @@ pub struct ViewOptions {
     /// [`DEFAULT_FONT_SIZE`].
     #[serde(default = "default_font_size")]
     pub font_size: u32,
+    /// Configurable key bindings for the picker.
+    #[serde(default)]
+    pub keys: KeyBindings,
 }
 
 impl Default for ViewOptions {
@@ -73,6 +78,7 @@ impl Default for ViewOptions {
             font_family: None,
             word_wrap: false,
             font_size: DEFAULT_FONT_SIZE,
+            keys: KeyBindings::default(),
         }
     }
 }
@@ -82,6 +88,41 @@ pub const DEFAULT_MAX_PREVIEW_LINES: usize = 8;
 
 /// Body text size used when a request carries no explicit `font_size`.
 pub const DEFAULT_FONT_SIZE: u32 = 16;
+
+/// Configurable key bindings for the picker frontend.
+///
+/// Every value is a key name (lowercase), optionally prefixed with
+/// `ctrl+`. Examples: `"enter"`, `"escape"`, `"delete"`, `"ctrl+delete"`,
+/// `"p"`, `"arrow_up"`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct KeyBindings {
+    pub move_up: String,
+    pub move_down: String,
+    pub confirm: String,
+    pub dismiss: String,
+    pub delete_entry: String,
+    pub clear_all: String,
+    pub toggle_pin: String,
+    pub action_next: String,
+    pub action_prev: String,
+}
+
+impl Default for KeyBindings {
+    fn default() -> Self {
+        Self {
+            move_up: "arrow_up".into(),
+            move_down: "arrow_down".into(),
+            confirm: "enter".into(),
+            dismiss: "escape".into(),
+            delete_entry: "delete".into(),
+            clear_all: "ctrl+delete".into(),
+            toggle_pin: "ctrl+p".into(),
+            action_next: "arrow_right".into(),
+            action_prev: "arrow_left".into(),
+        }
+    }
+}
 
 fn default_max_preview_lines() -> usize {
     DEFAULT_MAX_PREVIEW_LINES
@@ -118,10 +159,14 @@ pub enum ShowResponse {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PasterToHost {
-    Ready { protocol_version: u32 },
+    Ready {
+        protocol_version: u32,
+    },
     /// Reply to [`HostToPaster::Ping`].
     Pong,
-    Error { message: String },
+    Error {
+        message: String,
+    },
 }
 
 /// Frames sent by the core to a paster module on stdin.
@@ -193,6 +238,7 @@ mod tests {
                 font_family: Some("Symbols Nerd Font".into()),
                 word_wrap: true,
                 font_size: 18,
+                keys: KeyBindings::default(),
             },
         };
         let json = serde_json::to_string(&req).unwrap();

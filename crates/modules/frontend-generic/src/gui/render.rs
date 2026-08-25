@@ -38,15 +38,15 @@ impl eframe::App for PickerApp {
             self.fonts_probed = true;
         }
 
-        let up = keys::pressed(ctx, &keys::MOVE_UP);
-        let down = keys::pressed(ctx, &keys::MOVE_DOWN);
-        let confirm = keys::pressed(ctx, &keys::CONFIRM) && !self.rows.is_empty();
-        let dismiss = keys::pressed(ctx, &keys::DISMISS);
-        let delete = keys::pressed(ctx, &keys::DELETE_ENTRY);
-        let clear_all = keys::pressed(ctx, &keys::CLEAR_ALL);
-        let toggle_pin = keys::pressed(ctx, &keys::TOGGLE_PIN);
-        let action_next = keys::pressed(ctx, &keys::ACTION_NEXT);
-        let action_prev = keys::pressed(ctx, &keys::ACTION_PREV);
+        let up = keys::pressed(ctx, &self.bindings.move_up);
+        let down = keys::pressed(ctx, &self.bindings.move_down);
+        let confirm = keys::pressed(ctx, &self.bindings.confirm) && !self.rows.is_empty();
+        let dismiss = keys::pressed(ctx, &self.bindings.dismiss);
+        let delete = keys::pressed(ctx, &self.bindings.delete_entry);
+        let clear_all = keys::pressed(ctx, &self.bindings.clear_all);
+        let toggle_pin = keys::pressed(ctx, &self.bindings.toggle_pin);
+        let action_next = keys::pressed(ctx, &self.bindings.action_next);
+        let action_prev = keys::pressed(ctx, &self.bindings.action_prev);
 
         // Any key interaction claims the selection for the keyboard.
         let keyboard_used = up

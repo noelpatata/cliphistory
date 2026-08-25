@@ -174,6 +174,9 @@ pub struct FrontendConfig {
     /// Base text size of the embedded picker, in pixels. The monospace
     /// style (index tokens) stays two pixels smaller than this.
     pub font_size: u32,
+    /// Configurable key bindings for the picker.
+    #[serde(default)]
+    pub keys: cliphistory_proto::KeyBindings,
 }
 
 impl Default for FrontendConfig {
@@ -184,6 +187,7 @@ impl Default for FrontendConfig {
             font_family: None,
             word_wrap: false,
             font_size: c::DEFAULT_FONT_SIZE,
+            keys: Default::default(),
         }
     }
 }
