@@ -43,12 +43,29 @@ CREATE TABLE IF NOT EXISTS entries (
     width       INTEGER,
     height      INTEGER,
     pinned      INTEGER NOT NULL DEFAULT 0,
+    pinned_at   INTEGER,
     use_count   INTEGER NOT NULL DEFAULT 0,
     created_at  INTEGER NOT NULL,
     last_used_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_entries_created ON entries (created_at DESC);
 "#;
+
+/// Add columns introduced after a database was created. Idempotent: each
+/// statement runs only when the column is absent from `entries`.
+fn migrate(conn: &Connection) -> Result<()> {
+    let has = |col: &str| -> Result<bool> {
+        let mut stmt = conn.prepare("PRAGMA table_info(entries)")?;
+        let cols = stmt
+            .query_map([], |r| r.get::<_, String>(1))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(cols.iter().any(|c| c == col))
+    };
+    if !has("pinned_at")? {
+        conn.execute_batch("ALTER TABLE entries ADD COLUMN pinned_at INTEGER;")?;
+    }
+    Ok(())
+}
 
 pub struct Storage {
     conn: Mutex<Connection>,
@@ -69,6 +86,7 @@ impl Storage {
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         conn.execute_batch(SCHEMA).context("initialising schema")?;
+        migrate(&conn).context("running schema migrations")?;
         Ok(Self {
             conn: Mutex::new(conn),
             cache: Mutex::new(ContentCache::new(max_cache_bytes.max(0) as usize)),
@@ -85,6 +103,7 @@ impl Storage {
     pub fn open_in_memory_with(max_cache_bytes: i64) -> Result<Self> {
         let conn = Connection::open_in_memory()?;
         conn.execute_batch(SCHEMA)?;
+        migrate(&conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
             cache: Mutex::new(ContentCache::new(max_cache_bytes.max(0) as usize)),

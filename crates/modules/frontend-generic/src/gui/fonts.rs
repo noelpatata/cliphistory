@@ -57,9 +57,10 @@ pub fn install(ctx: &egui::Context, configured: Option<&str>) {
 /// * prepended → becomes the primary rendering face;
 /// * appended  → serves only glyphs missing from earlier fonts.
 fn register(fonts: &mut egui::FontDefinitions, key: &str, bytes: Vec<u8>, prepend: bool) {
-    fonts
-        .font_data
-        .insert(key.to_string(), std::sync::Arc::new(egui::FontData::from_owned(bytes)));
+    fonts.font_data.insert(
+        key.to_string(),
+        std::sync::Arc::new(egui::FontData::from_owned(bytes)),
+    );
     for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
         let chain = fonts.families.entry(family).or_default();
         if prepend {
@@ -173,10 +174,7 @@ fn visit_fonts(dir: &Path, depth: usize, visit: &mut dyn FnMut(&Path, &str)) {
             visit_fonts(&path, depth + 1, visit);
             continue;
         }
-        let Some(stem) = path
-            .file_stem()
-            .map(|s| s.to_string_lossy().to_lowercase())
-        else {
+        let Some(stem) = path.file_stem().map(|s| s.to_string_lossy().to_lowercase()) else {
             continue;
         };
         let lowered_ext = path
@@ -251,7 +249,10 @@ mod tests {
 
     #[test]
     fn normalisation_is_loose() {
-        assert_eq!(normalize_name("JetBrainsMono NerdFont"), "jetbrainsmononerdfont");
+        assert_eq!(
+            normalize_name("JetBrainsMono NerdFont"),
+            "jetbrainsmononerdfont"
+        );
         assert_eq!(normalize_name("jet-brains_mono"), "jetbrainsmono");
     }
 

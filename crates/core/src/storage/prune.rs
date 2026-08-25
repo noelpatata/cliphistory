@@ -132,9 +132,14 @@ impl Storage {
     }
 
     pub fn set_pinned(&self, id: i64, pinned: bool) -> Result<bool> {
+        let pinned_at = if pinned {
+            Some(super::unix_now() as i64)
+        } else {
+            None
+        };
         let n = self.conn.lock().expect("storage lock poisoned").execute(
-            "UPDATE entries SET pinned = ?2 WHERE id = ?1",
-            rusqlite::params![id, pinned as i64],
+            "UPDATE entries SET pinned = ?2, pinned_at = ?3 WHERE id = ?1",
+            rusqlite::params![id, pinned as i64, pinned_at],
         )?;
         Ok(n > 0)
     }

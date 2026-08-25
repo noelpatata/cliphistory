@@ -14,6 +14,10 @@ pub struct HistoryItem {
     pub created_at: u64,
     pub use_count: u64,
     pub pinned: bool,
+    /// When the entry was last pinned (epoch seconds); `None` while
+    /// unpinned. Drives pin-date ordering in frontends.
+    #[serde(default)]
+    pub pinned_at: Option<u64>,
     /// Absolute path to a cached downscaled PNG preview (images only).
     #[serde(default)]
     pub thumbnail: Option<String>,

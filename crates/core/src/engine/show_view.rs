@@ -84,6 +84,7 @@ mod tests {
             created_at: 0,
             use_count: 0,
             pinned: false,
+            pinned_at: None,
             thumbnail: None,
         }
     }

@@ -23,10 +23,14 @@ impl Storage {
     ) -> Result<Vec<HistoryItem>> {
         let limit_sql: i64 = limit.map_or(-1, |n| n.min(i64::MAX as usize) as i64);
         let sql = format!(
-            "SELECT id, kind, mime, size_bytes, preview, created_at, use_count, pinned, hash
+            "SELECT id, kind, mime, size_bytes, preview, created_at, use_count, pinned, pinned_at, hash
              FROM entries
              WHERE (?1 IS NULL OR preview LIKE '%' || ?1 || '%')
-             ORDER BY pinned DESC, created_at DESC
+             ORDER BY pinned DESC,
+                 -- Pinned group: earliest pin wins (user expectation).
+                 CASE WHEN pinned = 1 THEN COALESCE(pinned_at, created_at) END ASC,
+                 -- Unpinned group: newest copy first.
+                 CASE WHEN pinned = 0 THEN created_at END DESC
              LIMIT {limit_sql}"
         );
         let conn = self.conn.lock().expect("storage lock poisoned");
@@ -43,9 +47,13 @@ impl Storage {
                     created_at: r.get::<_, i64>(5)? as u64,
                     use_count: r.get::<_, i64>(6)? as u64,
                     pinned: r.get::<_, i64>(7)? != 0,
+                    pinned_at: {
+                        let v: Option<i64> = r.get(8)?;
+                        v.map(|sec| sec as u64)
+                    },
                     thumbnail: None,
                 },
-                r.get::<_, String>(8)?,
+                r.get::<_, String>(9)?,
             ))
         })?;
         let mut items = Vec::new();

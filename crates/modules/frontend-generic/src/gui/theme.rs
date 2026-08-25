@@ -28,6 +28,39 @@ const SELECTION: egui::Color32 = egui::Color32::from_rgb(64, 104, 168);
 const INDEX_COLOR: egui::Color32 = egui::Color32::from_rgb(130, 145, 170);
 /// Keyboard-focus accent for per-row action buttons.
 const FOCUS_COLOR: egui::Color32 = egui::Color32::from_rgb(255, 170, 70);
+/// Inverted fill for the pin button when its entry is pinned: light
+/// background so the pin state pops against the blue selection stripe.
+pub const PINNED_FILL: egui::Color32 = egui::Color32::from_rgb(215, 222, 234);
+/// Dark glyph on top of [`PINNED_FILL`].
+pub const PINNED_TEXT: egui::Color32 = egui::Color32::from_rgb(40, 55, 85);
+
+/// Per-row visual state passed to paint helpers so colours stay
+/// consistent across the row.
+#[derive(Clone, Copy)]
+pub struct RowPalette {
+    pub fill: egui::Color32,
+    /// Main text colour for label / glyph content.
+    pub text: egui::Color32,
+    /// Dimmed chrome (index tokens).
+    pub chrome: egui::Color32,
+}
+
+/// Derive the palette for one row.
+pub fn row_palette(selected: bool) -> RowPalette {
+    if selected {
+        RowPalette {
+            fill: SELECTION,
+            text: egui::Color32::WHITE,
+            chrome: INDEX_COLOR,
+        }
+    } else {
+        RowPalette {
+            fill: egui::Color32::TRANSPARENT,
+            text: egui::Color32::WHITE,
+            chrome: INDEX_COLOR,
+        }
+    }
+}
 
 /// Install fonts-independent styling (sizes, spacing) into `ctx`.
 ///
@@ -45,18 +78,6 @@ pub fn apply(ctx: &egui::Context, body_size: f32) {
         ]
         .into();
     });
-}
-
-/// Background colour for a row given its interaction state.
-pub fn row_fill(selected: bool, hovered: bool) -> egui::Color32 {
-    if selected {
-        SELECTION
-    } else if hovered {
-        // Dimmed variant of the selection colour.
-        SELECTION.linear_multiply(0.55)
-    } else {
-        egui::Color32::TRANSPARENT
-    }
 }
 
 /// Colour for index-token chrome.
