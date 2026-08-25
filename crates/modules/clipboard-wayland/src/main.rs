@@ -1,22 +1,23 @@
 //! Wayland clipboard reader.
 //!
-//! Samples the clipboard through `wl-clipboard-rs` (native Wayland client,
-//! no external binaries) and can take ownership of the clipboard to fulfil
-//! the daemon's write-back requests. The polling lifecycle lives in
-//! [`cliphistory_module_common::reader`]; this file is the platform adapter.
+//! Change detection is **event-driven**: a data-control watcher
+//! ([`watcher`]) sleeps in the compositor's dispatch loop and wakes only
+//! when clipboard ownership actually changes — no polling. When no
+//! data-control protocol exists the module degrades to timed sampling via
+//! [`cliphistory_module_common::reader`]'s polling mode. This file is the
+//! platform adapter; the lifecycle lives in module-common.
+
+mod watcher;
 
 use anyhow::{Context, Result};
 use cliphistory_module_common as mcommon;
-use cliphistory_module_common::reader::PollingReader;
+use cliphistory_module_common::reader::{PollingReader, Wake};
 use cliphistory_proto::{
-    ClipboardToHost, Content, ModuleKind, ModuleManifest, CAP_READ, CAP_WRITE,
-    PROTOCOL_VERSION,
+    ClipboardToHost, Content, ModuleKind, ModuleManifest, CAP_READ, CAP_WRITE, PROTOCOL_VERSION,
 };
 use wl_clipboard_rs::{copy as wlc, paste as wlp};
 
 const MODULE_ID: &str = "clipboard-wayland";
-/// How often the clipboard is re-sampled when no change notification exists.
-const POLL_INTERVAL_MS: u64 = 500;
 
 fn manifest() -> ModuleManifest {
     ModuleManifest {
@@ -34,14 +35,15 @@ fn manifest() -> ModuleManifest {
 struct WaylandReader;
 
 impl PollingReader for WaylandReader {
-    fn poll_interval_ms(&self) -> u64 {
-        POLL_INTERVAL_MS
-    }
+    // No poll_interval_ms override: this backend is strictly event-driven
+    // (see `attach_wake`). The trait's default interval only applies if the
+    // watcher unexpectedly cannot start — a state `probe` already makes
+    // near-impossible, since reads and events need the same protocols.
 
     /// Fail fast when no compositor/data-control exists. An empty clipboard
-    /// is a normal state, not an error — the poll loop tolerates it, so
-    /// those errors must not abort startup (a daemon that boots before the
-    /// first copy would otherwise kill its module 5 times and disable
+    /// is a normal state, not an error — tolerated errors are reported via
+    /// `Error` frames instead of failing startup (a daemon that boots before
+    /// the first copy would otherwise kill its module 5 times and disable
     /// clipboard tracking entirely).
     fn probe(&mut self) -> Result<()> {
         if let Err(e) = wlp::get_mime_types(wlp::ClipboardType::Regular, wlp::Seat::Unspecified) {
@@ -60,8 +62,7 @@ impl PollingReader for WaylandReader {
     /// Ask TARGETS first: browsers offer text/html for images, so flavor
     /// order — not "text first" — decides what we capture.
     fn sample(&self) -> Result<Option<Content>> {
-        let offered_set =
-            wlp::get_mime_types(wlp::ClipboardType::Regular, wlp::Seat::Unspecified)?;
+        let offered_set = wlp::get_mime_types(wlp::ClipboardType::Regular, wlp::Seat::Unspecified)?;
         let mut offered: Vec<String> = offered_set.into_iter().collect();
         offered.sort();
         let has = |want: &str| offered.iter().any(|o| o.eq_ignore_ascii_case(want));
@@ -103,6 +104,20 @@ impl PollingReader for WaylandReader {
             }
         });
     }
+
+    /// Event-driven change detection: the watcher sleeps in the
+    /// compositor's dispatch loop and wakes us only on real changes. When
+    /// it cannot start (no data-control protocol), returning `false` makes
+    /// the shared loop fall back to timed sampling.
+    fn attach_wake(&self, tx: std::sync::mpsc::Sender<Wake>) -> bool {
+        let started = watcher::spawn(tx);
+        if started {
+            log::info!("clipboard watcher attached (event-driven)");
+        } else {
+            log::info!("no data-control events available; falling back to polling");
+        }
+        started
+    }
 }
 
 fn main() -> std::process::ExitCode {
@@ -132,7 +147,7 @@ fn run() -> Result<()> {
     mcommon::emit(&ClipboardToHost::Ready {
         protocol_version: PROTOCOL_VERSION,
     })?;
-    mcommon::reader::run_polling(&mut reader)
+    mcommon::reader::run_event_loop(&mut reader)
 }
 
 fn log_frame_error(msg: &str) {

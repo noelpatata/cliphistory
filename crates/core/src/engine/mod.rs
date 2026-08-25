@@ -6,8 +6,8 @@
 //! * [`dispatch`]   – IPC routing; [`actions`] business logic; [`report`] doctor
 //! * [`state`]      – the `Shared` engine state and app events
 
-pub(crate) mod bootstrap;
 pub(crate) mod actions;
+pub(crate) mod bootstrap;
 pub(crate) mod dispatch;
 pub(crate) mod report;
 pub(crate) mod show_view;
@@ -25,7 +25,7 @@ use state::{AppEvent, Shared};
 
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::mpsc::channel;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 
 // ---------------------------------------------------------------------------
 // Entry point
@@ -75,6 +75,7 @@ fn run_inner(cfg: Config, socket_path: std::path::PathBuf) -> Result<()> {
         paster_tx: Arc::new(RwLock::new(None)),
         paster_id: Arc::new(RwLock::new(String::new())),
         frontend_id: Arc::new(RwLock::new(String::new())),
+        history_watchers: Arc::new(Mutex::new(Vec::new())),
         started_at: unix_now(),
         session: detect_session(&RealEnv),
         app_tx: app_tx.clone(),
@@ -169,9 +170,13 @@ fn handle_clipboard_event(shared: &Shared, content: cliphistory_proto::Content) 
                 shared.cfg.storage.max_age_days,
                 Some(shared.cfg.storage.max_total_bytes),
             );
+            // New entry (and any prune it triggered) is visible history.
+            shared.notify_history_changed();
         }
         Ok(crate::storage::InsertOutcome::Duplicate(id)) => {
             log::debug!("[{id}] promoted duplicate {}", content.preview());
+            // Promotion bumps the entry to the top: an ordering change.
+            shared.notify_history_changed();
         }
         Ok(crate::storage::InsertOutcome::TooLarge { size, limit }) => {
             log::info!("skipped {}B payload (limit {limit}B)", size);

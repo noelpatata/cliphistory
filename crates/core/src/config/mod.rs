@@ -8,7 +8,6 @@ use std::path::{Path, PathBuf};
 
 pub(crate) mod template;
 
-
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {

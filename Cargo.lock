@@ -432,6 +432,9 @@ dependencies = [
  "log",
  "serde_json",
  "sha2",
+ "wayland-client",
+ "wayland-protocols",
+ "wayland-protocols-wlr",
  "wl-clipboard-rs",
 ]
 

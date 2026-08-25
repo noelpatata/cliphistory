@@ -199,8 +199,7 @@ fn swap_symlink(dir: &Path, link_name: &str, target: &Path) -> Result<()> {
     let _ = fs::remove_file(&tmp);
     std::os::unix::fs::symlink(target.canonicalize()?, &tmp)
         .with_context(|| format!("linking {}", tmp.display()))?;
-    fs::rename(&tmp, &final_link)
-        .with_context(|| format!("activating {}", final_link.display()))
+    fs::rename(&tmp, &final_link).with_context(|| format!("activating {}", final_link.display()))
 }
 
 #[cfg(test)]

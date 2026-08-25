@@ -36,10 +36,14 @@ const CLEAR_CONFIRM_WINDOW: Duration = Duration::from_secs(3);
 const CLEAR_BUTTON_RESERVE: f32 = 120.0;
 /// Width of one square icon button in a row's action cluster.
 const ACTION_BUTTON_SIZE: f32 = 24.0;
-/// How often the open picker asks the daemon for fresh history.
+/// How often the open picker asks the daemon for fresh history when it
+/// cannot subscribe (older daemons without `WatchHistory`).
 const HISTORY_POLL_INTERVAL: Duration = Duration::from_millis(400);
 /// How many entries a refresh fetches (mirrors the daemon's own show cap).
 const HISTORY_POLL_LIMIT: usize = 100;
+/// Consecutive failed subscription attempts before giving up on push and
+/// falling back to timed polling for the rest of the session.
+const SUBSCRIBE_MAX_FAILURES: u32 = 2;
 
 /// What part of the selected row has keyboard focus. `→` walks
 /// Row → Pin → Delete → Row; `←` walks back.
@@ -112,7 +116,7 @@ pub fn pick(req: &ShowRequest, socket: Option<std::path::PathBuf>) -> Result<Sho
     if let Some(poll_socket) = socket.clone() {
         std::thread::Builder::new()
             .name("history-poll".into())
-            .spawn(move || poll_history(poll_socket, update_tx))
+            .spawn(move || sync_history(poll_socket, update_tx))
             .ok();
     }
     let socket_for_app = socket;
@@ -220,17 +224,76 @@ fn apply_permutation<T>(order: &[usize], items: &mut Vec<T>) {
         .collect();
 }
 
-/// Poll the daemon for history snapshots until the process ends. Only
-/// snapshots that differ from the previous one are forwarded, so idle
-/// periods cost one tiny IPC round trip per interval and nothing else.
-/// Failures (daemon restarting under us) are retried quietly.
-fn poll_history(socket: std::path::PathBuf, tx: std::sync::mpsc::Sender<Vec<HistoryItem>>) {
+/// Keep the picker's list in sync until the process ends.
+///
+/// Preferred transport: a `WatchHistory` subscription — one connection,
+/// daemon pushes a snapshot on every mutation, zero traffic while idle.
+/// If the subscription cannot be established (daemon predates
+/// `WatchHistory`, or it keeps dropping), fall back to timed polling.
+fn sync_history(socket: std::path::PathBuf, tx: std::sync::mpsc::Sender<Vec<HistoryItem>>) {
+    let mut failures: u32 = 0;
+    loop {
+        let mut subscribed = false;
+        if let Ok(mut stream) = crate::ipc::subscribe_history(&socket) {
+            subscribed = true;
+            failures = 0;
+            let mut last = None::<u64>;
+            let alive = loop {
+                match stream.next() {
+                    Some(Ok(items)) => {
+                        let fp = fingerprint(&items);
+                        if last != Some(fp) && tx.send(items).is_err() {
+                            break false; // UI gone; window closed.
+                        }
+                        last = Some(fp);
+                    }
+                    Some(Err(_)) => break true, // lost mid-stream: retry.
+                    None => break true,         // daemon closed the stream.
+                }
+            };
+            if !alive {
+                return;
+            }
+        }
+
+        if !subscribed || !supports_watch(&socket) {
+            // Daemon without WatchHistory (or socket hiccup): poll instead.
+            if !subscribed && failures + 1 >= SUBSCRIBE_MAX_FAILURES {
+                log_fallback();
+                poll_loop(&socket, tx);
+                return;
+            }
+        }
+
+        failures += 1;
+        std::thread::sleep(subscribe_backoff(failures));
+    }
+}
+
+/// True when the daemon answers `GetHistory` (i.e. it is reachable at
+/// all); used to distinguish "old daemon" from "socket gone".
+fn supports_watch(socket: &std::path::Path) -> bool {
+    crate::ipc::history(socket, 1).is_ok()
+}
+
+/// One-line notice that we downgraded to polling for this session.
+fn log_fallback() {
+    eprintln!("cliphistory: daemon does not support history push; polling instead");
+}
+
+/// Backoff between subscription retries: 0.5s, 1s, 2s … capped at 8s.
+fn subscribe_backoff(failures: u32) -> Duration {
+    Duration::from_millis((250 * (2 << failures.min(5))).min(8000))
+}
+
+/// Timed-polling fallback for daemons without `WatchHistory`.
+fn poll_loop(socket: &std::path::Path, tx: std::sync::mpsc::Sender<Vec<HistoryItem>>) {
     let mut last = None::<u64>;
     loop {
-        if let Ok(items) = crate::ipc::history(&socket, HISTORY_POLL_LIMIT) {
+        if let Ok(items) = crate::ipc::history(socket, HISTORY_POLL_LIMIT) {
             let fp = fingerprint(&items);
             if last != Some(fp) && tx.send(items).is_err() {
-                break; // UI gone; window closed.
+                return; // UI gone; window closed.
             }
             last = Some(fp);
         }
@@ -876,5 +939,14 @@ mod tests {
         let mut items = vec!["a", "b", "c"];
         apply_permutation(&[2, 0, 1], &mut items);
         assert_eq!(items, vec!["c", "a", "b"]);
+    }
+
+    #[test]
+    fn subscribe_backoff_grows_and_caps() {
+        assert_eq!(subscribe_backoff(0), Duration::from_millis(500));
+        assert_eq!(subscribe_backoff(1), Duration::from_millis(1000));
+        assert_eq!(subscribe_backoff(2), Duration::from_millis(2000));
+        // Caps at 8s no matter how many failures pile up.
+        assert_eq!(subscribe_backoff(9), Duration::from_millis(8000));
     }
 }

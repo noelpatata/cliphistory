@@ -1,17 +1,24 @@
 //! X11 clipboard reader backed by `xclip`.
 //!
-//! X11 exposes no clipboard-change notification usable from a plain client,
-//! so this module samples the CLIPBOARD selection every `POLL_INTERVAL_MS`
-//! and emits an event whenever the content hash changes. Writes go through
-//! `xclip` as well. The polling lifecycle lives in
+//! **This module must poll — X11 has no usable clipboard-change events.**
+//! The X11 selection protocol is purely synchronous: a client cannot
+//! subscribe to "clipboard changed"; it can only ask the current owner for
+//! contents on demand (and the owner may be gone by then). There is no
+//! daemon-side or compositor-side notification hook equivalent to
+//! Wayland's data-control events, so periodic sampling with hash
+//! deduplication is the only correct way to detect copies here. This is an
+//! X11 protocol limitation, not an implementation defect.
+//!
+//! The CLIPBOARD selection is sampled every `POLL_INTERVAL_MS` and an
+//! event is emitted whenever the content hash changes. Writes go through
+//! `xclip` as well. The lifecycle lives in
 //! [`cliphistory_module_common::reader`]; this file is the platform adapter.
 
 use anyhow::{Context, Result};
 use cliphistory_module_common as mcommon;
-use cliphistory_module_common::reader::{PollingReader, run_polling};
+use cliphistory_module_common::reader::{run_event_loop, PollingReader};
 use cliphistory_proto::{
-    ClipboardToHost, Content, ModuleKind, ModuleManifest, CAP_READ, CAP_WRITE,
-    PROTOCOL_VERSION,
+    ClipboardToHost, Content, ModuleKind, ModuleManifest, CAP_READ, CAP_WRITE, PROTOCOL_VERSION,
 };
 use std::process::{Command, Stdio};
 
@@ -122,7 +129,7 @@ fn run() -> Result<()> {
     mcommon::emit(&ClipboardToHost::Ready {
         protocol_version: PROTOCOL_VERSION,
     })?;
-    run_polling(&mut reader)
+    run_event_loop(&mut reader)
 }
 
 // ---------------------------------------------------------------------------

@@ -11,7 +11,7 @@ use anyhow::{Context, Result};
 use cliphistory_proto::{
     read_response, write_request, HistoryItem, IpcRequest, IpcResponse, ShowRequest,
 };
-use std::io::{BufReader, Read};
+use std::io::{BufRead, BufReader, Read};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 
@@ -85,4 +85,41 @@ pub fn history(socket: &std::path::Path, limit: usize) -> Result<Vec<HistoryItem
         IpcResponse::Err { message } => Err(anyhow::anyhow!(message)),
         other => Err(anyhow::anyhow!("unexpected daemon reply: {other:?}")),
     }
+}
+
+/// A stream of history snapshots pushed by the daemon on every mutation.
+///
+/// Created by [`subscribe_history`]; each item is one full snapshot
+/// (newest first, pinned on top). Ends with `Err` when the connection is
+/// lost or the daemon does not support `WatchHistory`.
+pub struct HistoryStream {
+    reader: BufReader<UnixStream>,
+}
+
+impl Iterator for HistoryStream {
+    type Item = Result<Vec<HistoryItem>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut line = String::new();
+        match self.reader.read_line(&mut line) {
+            Ok(0) => None,
+            Ok(_) => match serde_json::from_str::<IpcResponse>(line.trim()) {
+                Ok(IpcResponse::History { items }) => Some(Ok(items)),
+                Ok(IpcResponse::Err { message }) => Some(Err(anyhow::anyhow!(message))),
+                Ok(other) => Some(Err(anyhow::anyhow!("unexpected daemon push: {other:?}"))),
+                Err(e) => Some(Err(anyhow::anyhow!("bad daemon frame: {e}"))),
+            },
+            Err(_) => None,
+        }
+    }
+}
+
+/// Open a `WatchHistory` subscription against the daemon.
+pub fn subscribe_history(socket: &std::path::Path) -> Result<HistoryStream> {
+    let mut stream = UnixStream::connect(socket)
+        .with_context(|| format!("connecting to {}", socket.display()))?;
+    write_request(&mut stream, &IpcRequest::WatchHistory)?;
+    Ok(HistoryStream {
+        reader: BufReader::new(stream),
+    })
 }

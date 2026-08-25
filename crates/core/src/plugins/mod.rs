@@ -26,7 +26,9 @@ pub(crate) mod release;
 
 use crate::config::ModulesConfig;
 
-pub use model::{AssetRef, InstallReason, InstalledModule, ReleaseManifest, RemoteModule, TargetAssets};
+pub use model::{
+    AssetRef, InstallReason, InstalledModule, ReleaseManifest, RemoteModule, TargetAssets,
+};
 pub use process::{query_manifest, run_frontend, ClipboardHandle, ModuleHandle, PasterHandle};
 pub use release::verify_sha256;
 

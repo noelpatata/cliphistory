@@ -115,7 +115,10 @@ fn start_impl<S: Slot>(shared: &Shared) {
         return;
     }
     let Some(module) = shared.mm.resolve(&id) else {
-        log::error!("{} module '{id}' vanished; disabling until restart", S::NAME);
+        log::error!(
+            "{} module '{id}' vanished; disabling until restart",
+            S::NAME
+        );
         *S::id_slot(shared).write().unwrap() = String::new();
         return;
     };
@@ -140,7 +143,11 @@ fn start_impl<S: Slot>(shared: &Shared) {
                     c::CLIPBOARD_MAX_SPAWN_ATTEMPTS
                 );
                 if attempts >= c::CLIPBOARD_MAX_SPAWN_ATTEMPTS {
-                    log::error!("giving up on {0} '{1}'; run `cliphistory doctor`", S::NAME, id);
+                    log::error!(
+                        "giving up on {0} '{1}'; run `cliphistory doctor`",
+                        S::NAME,
+                        id
+                    );
                     *S::id_slot(shared).write().unwrap() = String::new();
                     *S::tx_slot(shared).write().unwrap() = None;
                     return;
@@ -211,4 +218,3 @@ fn schedule_restart_impl<S: Slot>(shared: &Shared, id: &str) {
 fn spin(d: Duration) {
     std::thread::sleep(d);
 }
-

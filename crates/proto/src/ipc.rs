@@ -37,6 +37,12 @@ pub enum IpcRequest {
     },
     /// Open the frontend to pick an entry; copies the selection.
     Show,
+    /// Subscribe to history snapshots: the daemon pushes a `History`
+    /// response on this connection every time stored history mutates
+    /// (insert, delete, pin, clear), until either side closes it. Clients
+    /// whose daemons predate this request receive `Err` and must fall back
+    /// to polling.
+    WatchHistory,
     Doctor,
     ModulesList,
     ModulesInstall {
@@ -181,5 +187,15 @@ mod tests {
         let mut buf: Vec<u8> = Vec::new();
         write_request(&mut buf, &IpcRequest::Ping).unwrap();
         assert_eq!(buf, b"{\"cmd\":\"ping\"}\n");
+    }
+
+    #[test]
+    fn watch_history_wire_shape_is_stable() {
+        let json = serde_json::to_string(&IpcRequest::WatchHistory).unwrap();
+        assert_eq!(json, r#"{"cmd":"watch_history"}"#);
+        assert_eq!(
+            serde_json::from_str::<IpcRequest>(&json).unwrap(),
+            IpcRequest::WatchHistory
+        );
     }
 }

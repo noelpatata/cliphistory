@@ -10,9 +10,9 @@
 //! The core stays display-server agnostic: it never knows which keys a
 //! module sends.
 
+use crate::discovery::SessionType;
 use anyhow::Result;
 use cliphistory_proto::HostToPaster;
-use crate::discovery::SessionType;
 use std::process::{Command, Stdio};
 use std::sync::mpsc::Sender;
 use std::thread;

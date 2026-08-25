@@ -418,10 +418,17 @@ mod budget_tests {
         let s = Storage::open_in_memory().unwrap();
         // Three ~120-byte entries; a 250-byte budget admits only the two
         // newest.
-        for t in [format!("old-{}", "x".repeat(116)), format!("mid-{}", "x".repeat(116)), "newest-entry".to_string()] {
+        for t in [
+            format!("old-{}", "x".repeat(116)),
+            format!("mid-{}", "x".repeat(116)),
+            "newest-entry".to_string(),
+        ] {
             s.insert(
                 &Content::Text { text: t },
-                InsertOpts { max_item_size: 1000, thumbnail_size: 0 },
+                InsertOpts {
+                    max_item_size: 1000,
+                    thumbnail_size: 0,
+                },
             )
             .unwrap();
         }
@@ -436,8 +443,13 @@ mod budget_tests {
         let s = Storage::open_in_memory().unwrap();
         for i in 0..3 {
             let id = match s.insert(
-                &Content::Text { text: format!("e{i}") },
-                InsertOpts { max_item_size: 1000, thumbnail_size: 0 },
+                &Content::Text {
+                    text: format!("e{i}"),
+                },
+                InsertOpts {
+                    max_item_size: 1000,
+                    thumbnail_size: 0,
+                },
             ) {
                 Ok(InsertOutcome::Inserted(id)) => id,
                 o => panic!("{o:?}"),
@@ -454,7 +466,8 @@ mod budget_tests {
     #[test]
     fn zero_budget_disables_size_cap() {
         let s = Storage::open_in_memory().unwrap();
-        s.insert(&Content::Text { text: "x".into() }, InsertOpts::sized(10)).unwrap();
+        s.insert(&Content::Text { text: "x".into() }, InsertOpts::sized(10))
+            .unwrap();
         s.prune_with_budget(0, 0, Some(0)).unwrap();
         assert_eq!(s.count().unwrap(), 1);
     }

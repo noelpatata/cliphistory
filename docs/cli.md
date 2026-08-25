@@ -142,6 +142,13 @@ Module kinds: `clipboard-*` (read the system clipboard), `frontend-*`
 (render the picker), `paster-*` (replay the paste chord — `paster-uinput`
 is kernel-level and covers Wayland, X11 and TTY alike).
 
+Change detection differs by platform: on **Wayland**,
+`clipboard-wayland` subscribes to the compositor's data-control events and
+uses no CPU while the clipboard is idle — strictly event-driven, no
+polling. On **X11**, change events do not exist in the protocol, so
+`clipboard-x11` necessarily polls (`POLL_INTERVAL_MS`) — that is an X11
+limitation, not wasted work.
+
 `frontend-generic` is the only frontend you need: a **built-in egui window**
 (X11 + Wayland, nothing to install). Click an entry, or type in the filter
 box and use ↑/↓ + Enter; <kbd>Delete</kbd> removes the focused entry from

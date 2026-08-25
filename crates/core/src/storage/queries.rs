@@ -69,9 +69,8 @@ impl Storage {
     pub fn content_head(&self, id: i64, max_bytes: usize) -> Result<Option<ContentHead>> {
         let conn = self.conn.lock().expect("storage lock poisoned");
         // substr() on a BLOB slices bytes, so `max_bytes` bounds the read.
-        let mut stmt = conn.prepare(
-            "SELECT kind, substr(data, 1, ?2) FROM entries WHERE id = ?1",
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT kind, substr(data, 1, ?2) FROM entries WHERE id = ?1")?;
         let mut rows = stmt.query(rusqlite::params![id, max_bytes as i64])?;
         let Some(row) = rows.next()? else {
             return Ok(None);

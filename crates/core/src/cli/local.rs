@@ -24,7 +24,9 @@ pub(crate) fn discover(cfg: &Config) -> Result<()> {
     ] {
         println!(
             "  {label:<9} {}",
-            ids.first().map(String::as_str).unwrap_or("<none available>")
+            ids.first()
+                .map(String::as_str)
+                .unwrap_or("<none available>")
         );
     }
     if report.session == discovery::SessionType::Tty {

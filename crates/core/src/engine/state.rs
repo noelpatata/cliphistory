@@ -7,7 +7,7 @@ use crate::storage::Storage;
 use cliphistory_proto::{ClipboardToHost, HostToClipboard, HostToPaster, PasterToHost};
 use std::os::unix::net::UnixStream;
 use std::sync::mpsc::Sender;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 
 /// Immutable-after-start configuration plus shared module channels.
 ///
@@ -22,9 +22,24 @@ pub(crate) struct Shared {
     pub(crate) paster_tx: Arc<RwLock<Option<Sender<HostToPaster>>>>,
     pub(crate) paster_id: Arc<RwLock<String>>,
     pub(crate) frontend_id: Arc<RwLock<String>>,
+    /// Frontends subscribed via `WatchHistory`: one wake signal per open
+    /// subscription. A dead receiver makes `send` fail, which is how the
+    /// registry prunes itself.
+    pub(crate) history_watchers: Arc<Mutex<Vec<Sender<()>>>>,
     pub(crate) started_at: u64,
     pub(crate) session: discovery::SessionType,
     pub(crate) app_tx: Sender<AppEvent>,
+}
+
+impl Shared {
+    /// Wake every history subscriber; receivers that went away (picker
+    /// closed, connection dropped) are pruned on the way.
+    pub(crate) fn notify_history_changed(&self) {
+        self.history_watchers
+            .lock()
+            .expect("history watchers lock poisoned")
+            .retain(|tx| tx.send(()).is_ok());
+    }
 }
 
 impl Shared {

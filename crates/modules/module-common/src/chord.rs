@@ -40,11 +40,17 @@ pub struct KeyEvent {
 }
 
 fn press(code: u16) -> KeyEvent {
-    KeyEvent { code, state: State::Press }
+    KeyEvent {
+        code,
+        state: State::Press,
+    }
 }
 
 fn release(code: u16) -> KeyEvent {
-    KeyEvent { code, state: State::Release }
+    KeyEvent {
+        code,
+        state: State::Release,
+    }
 }
 
 /// Ordered events realizing the chord: modifiers down, key tap, modifiers up.

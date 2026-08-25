@@ -3,7 +3,7 @@
 
 use super::distro::{detect_distro, DistroInfo};
 use super::ranking::{probe_requirements, rank_candidates, InstalledInfo};
-use super::session::{detect_session, SessionType, RealEnv};
+use super::session::{detect_session, RealEnv, SessionType};
 use crate::config::Config;
 use crate::constants as c;
 use anyhow::Result;

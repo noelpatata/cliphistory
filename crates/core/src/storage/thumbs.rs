@@ -7,7 +7,9 @@ use std::path::PathBuf;
 impl Storage {
     /// Directory holding cached previews (`None` for in-memory DBs).
     pub fn thumbs_dir(&self) -> Option<PathBuf> {
-        self.path.parent().map(|p| p.join(crate::constants::THUMBS_DIRNAME))
+        self.path
+            .parent()
+            .map(|p| p.join(crate::constants::THUMBS_DIRNAME))
     }
 
     pub(crate) fn thumb_path(&self, hash: &str) -> Option<PathBuf> {

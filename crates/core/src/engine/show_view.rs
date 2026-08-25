@@ -34,7 +34,10 @@ pub(crate) fn build_request(
             item.preview = display_preview(&head, item.size_bytes, view.max_preview_lines);
         }
     }
-    ShowRequest { entries: items, view }
+    ShowRequest {
+        entries: items,
+        view,
+    }
 }
 
 /// Render `head` as a display preview: real newlines preserved, capped at
@@ -48,8 +51,10 @@ pub(crate) fn display_preview(head: &str, total_bytes: u64, max_lines: usize) ->
 
     if max_lines > 0 && lines.len() > max_lines {
         let hidden = lines.len() - max_lines;
-        let mut kept: Vec<String> =
-            lines[..max_lines].iter().map(|l| (*l).to_string()).collect();
+        let mut kept: Vec<String> = lines[..max_lines]
+            .iter()
+            .map(|l| (*l).to_string())
+            .collect();
         kept.push(format!("… (+{hidden} more lines)"));
         return kept.join("\n");
     }
@@ -86,10 +91,7 @@ mod tests {
     #[test]
     fn caps_lines_with_marker() {
         let raw = "l1\nl2\nl3\nl4\nl5\nl6\nl7";
-        assert_eq!(
-            display_preview(raw, 7, 3),
-            "l1\nl2\nl3\n… (+4 more lines)"
-        );
+        assert_eq!(display_preview(raw, 7, 3), "l1\nl2\nl3\n… (+4 more lines)");
     }
 
     #[test]
@@ -157,7 +159,10 @@ mod tests {
     #[test]
     fn line_cap_applies_at_request_build() {
         let items = vec![item(1, "text", "old", 100)];
-        let view = ViewOptions { max_preview_lines: 1, ..Default::default() };
+        let view = ViewOptions {
+            max_preview_lines: 1,
+            ..Default::default()
+        };
         let req = build_request(items, view, &|_| Some("a\nb\nc".into()));
         assert_eq!(req.entries[0].preview, "a\n… (+2 more lines)");
     }

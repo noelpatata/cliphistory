@@ -26,11 +26,22 @@ pub(crate) fn handle_conn(shared: &Shared, stream: UnixStream) {
     let req: IpcRequest = match serde_json::from_str(line.trim()) {
         Ok(r) => r,
         Err(e) => {
-            respond(&mut writer, IpcResponse::err(format!("bad request: {e}")));
+            let _ = respond(&mut writer, IpcResponse::err(format!("bad request: {e}")));
             return;
         }
     };
     log::debug!("request: {req:?}");
+
+    // History subscriptions hold the connection open and receive a frame
+    // on every mutation — handled by a dedicated worker.
+    if matches!(req, IpcRequest::WatchHistory) {
+        let st = shared.clone();
+        std::thread::Builder::new()
+            .name("history-watch".into())
+            .spawn(move || serve_history_watch(&st, &writer))
+            .ok();
+        return;
+    }
 
     // Frontend runs and module installs can block for minutes; answer them
     // from a worker so the socket write happens whenever they finish.
@@ -40,33 +51,60 @@ pub(crate) fn handle_conn(shared: &Shared, stream: UnixStream) {
             .name("slow-op".into())
             .spawn(move || {
                 let resp = actions::slow(&st, req);
-                respond(&mut writer, resp);
+                let _ = respond(&mut writer, resp);
             })
             .ok();
         return;
     }
 
-    respond(&mut writer, quick_dispatch(shared, req));
+    let _ = respond(&mut writer, quick_dispatch(shared, req));
 }
 
-fn respond(writer: &mut UnixStream, resp: IpcResponse) {
-    let mut line = match serde_json::to_vec(&resp) {
-        Ok(v) => v,
-        Err(e) => {
-            log::error!("serialize response: {e}");
-            return;
-        }
-    };
+/// Write one response frame; `Err` means the client is gone.
+fn respond(writer: &mut UnixStream, resp: IpcResponse) -> std::io::Result<()> {
+    let mut line = serde_json::to_vec(&resp).map_err(|e| {
+        log::error!("serialize response: {e}");
+        std::io::Error::new(std::io::ErrorKind::InvalidData, e)
+    })?;
     line.push(b'\n');
-    if writer.write_all(&line).is_err() {
-        log::debug!("client disconnected before response");
-    }
+    writer.write_all(&line)
 }
-
 
 /// Map a fallible operation onto an `Err` IPC response.
 fn err_resp(e: impl std::fmt::Display) -> IpcResponse {
     IpcResponse::err(format!("{e:#}"))
+}
+
+/// Serve one `WatchHistory` connection: push a fresh history snapshot on
+/// every mutation until the client goes away.
+///
+/// The initial snapshot is sent immediately so the subscriber starts with
+/// a complete picture without a separate `GetHistory` round trip.
+fn serve_history_watch(st: &Shared, writer: &UnixStream) {
+    let (tx, rx) = std::sync::mpsc::channel::<()>();
+    st.history_watchers
+        .lock()
+        .expect("history watchers lock poisoned")
+        .push(tx.clone());
+    // Wake the new subscriber right away with the current state.
+    let _ = tx.send(());
+
+    let mut writer = match writer.try_clone() {
+        Ok(w) => w,
+        Err(_) => return, // registry entry is pruned by its dead receiver.
+    };
+    while rx.recv().is_ok() {
+        let resp = match st
+            .storage
+            .history_items(Some(crate::constants::SHOW_ENTRIES_LIMIT), None)
+        {
+            Ok(items) => IpcResponse::History { items },
+            Err(e) => err_resp(e),
+        };
+        if respond(&mut writer, resp).is_err() {
+            break; // client closed; dead receiver prunes itself on notify.
+        }
+    }
 }
 
 /// Requests answered synchronously on the connection thread.
@@ -75,25 +113,34 @@ fn quick_dispatch(st: &Shared, req: IpcRequest) -> IpcResponse {
     match req {
         R::Ping => IpcResponse::ok("pong"),
         R::Status => actions::status(st),
-        R::GetHistory { limit, query } => match st
-            .storage
-            .history_items(limit.or(Some(crate::constants::DEFAULT_HISTORY_LIMIT)), query.as_deref())
-        {
+        R::GetHistory { limit, query } => match st.storage.history_items(
+            limit.or(Some(crate::constants::DEFAULT_HISTORY_LIMIT)),
+            query.as_deref(),
+        ) {
             Ok(items) => IpcResponse::History { items },
             Err(e) => err_resp(e),
         },
         R::DeleteItem { id } => match st.storage.delete(id) {
-            Ok(true) => IpcResponse::ok(format!("deleted entry {id}")),
+            Ok(true) => {
+                st.notify_history_changed();
+                IpcResponse::ok(format!("deleted entry {id}"))
+            }
             Ok(false) => IpcResponse::err(format!("no entry {id}")),
             Err(e) => err_resp(e),
         },
         R::SetPinned { id, pinned } => match st.storage.set_pinned(id, pinned) {
-            Ok(true) => IpcResponse::ok(format!("entry {id} pinned={pinned}")),
+            Ok(true) => {
+                st.notify_history_changed();
+                IpcResponse::ok(format!("entry {id} pinned={pinned}"))
+            }
             Ok(false) => IpcResponse::err(format!("no entry {id}")),
             Err(e) => err_resp(e),
         },
         R::ClearAll => match st.storage.clear() {
-            Ok(n) => IpcResponse::ok(format!("cleared {n} entries (pinned kept)")),
+            Ok(n) => {
+                st.notify_history_changed();
+                IpcResponse::ok(format!("cleared {n} entries (pinned kept)"))
+            }
             Err(e) => err_resp(e),
         },
         R::CopyEntry { id } => actions::copy_entry(st, id),
@@ -112,6 +159,8 @@ fn quick_dispatch(st: &Shared, req: IpcRequest) -> IpcResponse {
         }
         // Handled on the slow-op path before reaching here.
         R::Show | R::ModulesInstall { .. } => unreachable!(),
+        // Handled by its own streaming worker before reaching here.
+        R::WatchHistory => unreachable!(),
     }
 }
 
@@ -138,6 +187,7 @@ mod tests {
             paster_tx: std::sync::Arc::new(RwLock::new(None)),
             paster_id: std::sync::Arc::new(RwLock::new(String::new())),
             frontend_id: std::sync::Arc::new(RwLock::new(String::new())),
+            history_watchers: Default::default(),
             started_at: 0,
             session: crate::discovery::SessionType::Tty,
             app_tx,
@@ -158,7 +208,13 @@ mod tests {
     fn history_roundtrip_through_dispatch() {
         let st = test_shared();
         let id = seed_entry(&st, "hello dispatch");
-        let resp = quick_dispatch(&st, IpcRequest::GetHistory { limit: None, query: None });
+        let resp = quick_dispatch(
+            &st,
+            IpcRequest::GetHistory {
+                limit: None,
+                query: None,
+            },
+        );
         match resp {
             IpcResponse::History { items } => {
                 assert_eq!(items.len(), 1);
@@ -196,7 +252,13 @@ mod tests {
             IpcResponse::Ok { .. }
         ));
         assert!(matches!(
-            quick_dispatch(&st, IpcRequest::SetPinned { id: 999, pinned: true }),
+            quick_dispatch(
+                &st,
+                IpcRequest::SetPinned {
+                    id: 999,
+                    pinned: true
+                }
+            ),
             IpcResponse::Err { .. }
         ));
     }

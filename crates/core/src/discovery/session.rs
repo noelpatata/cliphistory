@@ -75,7 +75,12 @@ mod tests {
     #[test]
     fn session_from_env_vars() {
         let mk = |pairs: &[(&str, &str)]| {
-            MapEnv(pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect())
+            MapEnv(
+                pairs
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), v.to_string()))
+                    .collect(),
+            )
         };
         assert_eq!(
             detect_session(&mk(&[(c::ENV_SESSION_TYPE, "wayland")])),

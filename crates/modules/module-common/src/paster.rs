@@ -30,13 +30,11 @@ pub fn serve<B: PasteBackend>(backend_name: BackendName, mut backend: B) -> Resu
 
     let stdin = std::io::stdin();
     let mut reader = stdin.lock();
-    while let Some(frame) =
-        next_frame::<HostToPaster, _>(&mut reader, |line, e| {
-            let _ = emit(&PasterToHost::Error {
-                message: format!("unparsable frame {e}: {line:.120}"),
-            });
-        })
-    {
+    while let Some(frame) = next_frame::<HostToPaster, _>(&mut reader, |line, e| {
+        let _ = emit(&PasterToHost::Error {
+            message: format!("unparsable frame {e}: {line:.120}"),
+        });
+    }) {
         match frame {
             HostToPaster::Ping => emit(&PasterToHost::Pong)?,
             HostToPaster::Paste => {

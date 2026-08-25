@@ -81,4 +81,3 @@ fn auto_paste_line(st: &Shared) -> String {
         },
     )
 }
-

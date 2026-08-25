@@ -72,8 +72,8 @@ pub fn resolve_desired(shared: &mut Shared) -> Result<DesiredModules> {
         // Rank installed modules first…
         let pick =
             discovery::rank_candidates(source.candidates, &infos, source.preferred, source.kind)
-            .first()
-            .cloned();
+                .first()
+                .cloned();
 
         // …and fall back to remote metadata when nothing is installed yet
         // (fresh machine): rank by published `requires` probed on PATH.
@@ -112,7 +112,6 @@ pub fn resolve_desired(shared: &mut Shared) -> Result<DesiredModules> {
     }
     Ok(desired)
 }
-
 
 /// Rank not-yet-installed candidates using release-manifest metadata.
 /// `None` when the source is unreachable.

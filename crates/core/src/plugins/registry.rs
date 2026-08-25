@@ -37,7 +37,10 @@ impl ModuleManager {
                 .map(|e| e.path())
                 .filter(|p| {
                     p.file_name()
-                        .map(|n| n.to_string_lossy().starts_with(super::bin_prefix().as_str()))
+                        .map(|n| {
+                            n.to_string_lossy()
+                                .starts_with(super::bin_prefix().as_str())
+                        })
                         .unwrap_or(false)
                 })
                 .filter_map(|p| {
