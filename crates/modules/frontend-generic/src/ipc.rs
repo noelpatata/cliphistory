@@ -8,7 +8,9 @@
 //! the daemon when it spawns this frontend.
 
 use anyhow::{Context, Result};
-use cliphistory_proto::{read_response, write_request, IpcRequest, IpcResponse, ShowRequest};
+use cliphistory_proto::{
+    read_response, write_request, HistoryItem, IpcRequest, IpcResponse, ShowRequest,
+};
 use std::io::{BufReader, Read};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
@@ -61,6 +63,25 @@ pub fn set_pinned(socket: &std::path::Path, id: i64, pinned: bool) -> Result<Str
     write_request(&mut stream, &IpcRequest::SetPinned { id, pinned })?;
     match read_response(&mut BufReader::new(stream))? {
         IpcResponse::Ok { message } => Ok(message),
+        IpcResponse::Err { message } => Err(anyhow::anyhow!(message)),
+        other => Err(anyhow::anyhow!("unexpected daemon reply: {other:?}")),
+    }
+}
+
+/// Fetch the current history (newest first, pinned on top) so the picker
+/// can refresh its list while it is open.
+pub fn history(socket: &std::path::Path, limit: usize) -> Result<Vec<HistoryItem>> {
+    let mut stream = UnixStream::connect(socket)
+        .with_context(|| format!("connecting to {}", socket.display()))?;
+    write_request(
+        &mut stream,
+        &IpcRequest::GetHistory {
+            limit: Some(limit),
+            query: None,
+        },
+    )?;
+    match read_response(&mut BufReader::new(stream))? {
+        IpcResponse::History { items } => Ok(items),
         IpcResponse::Err { message } => Err(anyhow::anyhow!(message)),
         other => Err(anyhow::anyhow!("unexpected daemon reply: {other:?}")),
     }

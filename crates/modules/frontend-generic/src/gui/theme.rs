@@ -26,6 +26,8 @@ pub const COLUMN_GAP: f32 = 12.0;
 const SELECTION: egui::Color32 = egui::Color32::from_rgb(64, 104, 168);
 /// Dimmed chrome for the `[NNN]` index tokens.
 const INDEX_COLOR: egui::Color32 = egui::Color32::from_rgb(130, 145, 170);
+/// Keyboard-focus accent for per-row action buttons.
+const FOCUS_COLOR: egui::Color32 = egui::Color32::from_rgb(255, 170, 70);
 
 /// Install fonts-independent styling (sizes, spacing) into `ctx`.
 ///
@@ -62,7 +64,13 @@ pub fn index_color() -> egui::Color32 {
     INDEX_COLOR
 }
 
-/// Outline drawn on the keyboard-focused per-row action button.
+/// Outline drawn on the keyboard-focused per-row action button. Bright
+/// amber on purpose: it must stand out against the blue selection stripe.
 pub fn focus_stroke() -> egui::Stroke {
-    egui::Stroke::new(1.5_f32, SELECTION)
+    egui::Stroke::new(2.5_f32, FOCUS_COLOR)
+}
+
+/// Tint behind the keyboard-focused action button.
+pub fn focus_fill() -> egui::Color32 {
+    FOCUS_COLOR.gamma_multiply(0.25)
 }

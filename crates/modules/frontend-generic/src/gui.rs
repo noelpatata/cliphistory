@@ -13,7 +13,8 @@
 //! reachable with →/← (plus Ctrl+P pin and Delete shortcuts), a
 //! double-confirmed clear-all (button or Ctrl+Delete) that keeps pinned
 //! entries — all edits go through the daemon IPC while the window stays
-//! open.
+//! open. A background poller keeps the list in sync while it is open:
+//! newly copied entries appear on their own and pins float to the top.
 
 mod fonts;
 mod keys;
@@ -21,7 +22,10 @@ mod layout;
 mod theme;
 
 use anyhow::Result;
-use cliphistory_proto::{ShowRequest, ShowResponse};
+use cliphistory_proto::{HistoryItem, ShowRequest, ShowResponse};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -32,6 +36,10 @@ const CLEAR_CONFIRM_WINDOW: Duration = Duration::from_secs(3);
 const CLEAR_BUTTON_RESERVE: f32 = 120.0;
 /// Width of one square icon button in a row's action cluster.
 const ACTION_BUTTON_SIZE: f32 = 24.0;
+/// How often the open picker asks the daemon for fresh history.
+const HISTORY_POLL_INTERVAL: Duration = Duration::from_millis(400);
+/// How many entries a refresh fetches (mirrors the daemon's own show cap).
+const HISTORY_POLL_LIMIT: usize = 100;
 
 /// What part of the selected row has keyboard focus. `→` walks
 /// Row → Pin → Delete → Row; `←` walks back.
@@ -79,17 +87,7 @@ pub fn pick(req: &ShowRequest, socket: Option<std::path::PathBuf>) -> Result<Sho
         return Ok(ShowResponse::Dismissed);
     }
 
-    let rows: Vec<Row> = req
-        .entries
-        .iter()
-        .enumerate()
-        .map(|(pos, entry)| Row {
-            index_token: format!("[{:03}]", pos + 1),
-            label: entry.preview.clone(),
-            id: entry.id,
-            pinned: entry.pinned,
-        })
-        .collect();
+    let rows = build_rows(&req.entries);
 
     let decoded_thumbs: Vec<Option<DecodedThumb>> = req
         .entries
@@ -97,11 +95,27 @@ pub fn pick(req: &ShowRequest, socket: Option<std::path::PathBuf>) -> Result<Sho
         .map(|entry| entry.thumbnail.as_deref().and_then(decode_png))
         .collect();
 
+    let snapshot = PickerSnapshot {
+        rows,
+        decoded_thumbs,
+        wrap_labels: req.view.word_wrap,
+        body_size: req.view.font_size.max(1) as f32,
+    };
+
     let result = Arc::new(Mutex::new(None::<ShowResponse>));
     let result_for_app = result.clone();
     let font_family = req.view.font_family.clone();
-    let word_wrap = req.view.word_wrap;
-    let font_size = req.view.font_size.max(1) as f32;
+
+    // Live updates: a background thread polls the daemon's history and
+    // streams snapshots over whenever they differ from the last one.
+    let (update_tx, update_rx) = std::sync::mpsc::channel();
+    if let Some(poll_socket) = socket.clone() {
+        std::thread::Builder::new()
+            .name("history-poll".into())
+            .spawn(move || poll_history(poll_socket, update_tx))
+            .ok();
+    }
+    let socket_for_app = socket;
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("cliphistory")
@@ -114,14 +128,12 @@ pub fn pick(req: &ShowRequest, socket: Option<std::path::PathBuf>) -> Result<Sho
         options,
         Box::new(move |cc| {
             fonts::install(&cc.egui_ctx, font_family.as_deref());
-            theme::apply(&cc.egui_ctx, font_size);
+            theme::apply(&cc.egui_ctx, snapshot.body_size);
             Ok(Box::new(PickerApp::new(
                 &cc.egui_ctx,
-                rows,
-                decoded_thumbs,
-                word_wrap,
-                font_size,
-                socket,
+                snapshot,
+                socket_for_app,
+                update_rx,
                 result_for_app,
             )))
         }),
@@ -141,7 +153,9 @@ fn action_button(glyph: egui::RichText, focused: bool) -> egui::Button<'static> 
     let mut button =
         egui::Button::new(glyph).min_size(egui::vec2(ACTION_BUTTON_SIZE, ACTION_BUTTON_SIZE));
     if focused {
-        button = button.stroke(theme::focus_stroke());
+        button = button
+            .stroke(theme::focus_stroke())
+            .fill(theme::focus_fill());
     }
     button
 }
@@ -162,6 +176,78 @@ fn decode_png(path: &str) -> Option<DecodedThumb> {
     })
 }
 
+/// Map daemon history items onto selectable rows.
+fn build_rows(items: &[HistoryItem]) -> Vec<Row> {
+    items
+        .iter()
+        .enumerate()
+        .map(|(pos, entry)| Row {
+            index_token: format!("[{:03}]", pos + 1),
+            label: entry.preview.clone(),
+            id: entry.id,
+            pinned: entry.pinned,
+        })
+        .collect()
+}
+
+/// Cheap change detector between two history snapshots: ids, pin state and
+/// previews fully determine what the list renders.
+fn fingerprint(items: &[HistoryItem]) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    for item in items {
+        item.id.hash(&mut hasher);
+        item.pinned.hash(&mut hasher);
+        item.preview.hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
+/// Indices of `pinned` reordered stable-first by pin state, mirroring the
+/// daemon's ordering rule (pinned before unpinned, otherwise unchanged).
+fn pinned_first_order(pinned: &[bool]) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..pinned.len()).collect();
+    order.sort_by_key(|&i| !pinned[i]);
+    order
+}
+
+/// Rearrange `items` in place so element `order[k]` ends up at position
+/// `k`. `order` must be a permutation.
+fn apply_permutation<T>(order: &[usize], items: &mut Vec<T>) {
+    let mut old: Vec<Option<T>> = std::mem::take(items).into_iter().map(Some).collect();
+    *items = order
+        .iter()
+        .map(|&i| old[i].take().expect("permutation visits every index once"))
+        .collect();
+}
+
+/// Poll the daemon for history snapshots until the process ends. Only
+/// snapshots that differ from the previous one are forwarded, so idle
+/// periods cost one tiny IPC round trip per interval and nothing else.
+/// Failures (daemon restarting under us) are retried quietly.
+fn poll_history(socket: std::path::PathBuf, tx: std::sync::mpsc::Sender<Vec<HistoryItem>>) {
+    let mut last = None::<u64>;
+    loop {
+        if let Ok(items) = crate::ipc::history(&socket, HISTORY_POLL_LIMIT) {
+            let fp = fingerprint(&items);
+            if last != Some(fp) && tx.send(items).is_err() {
+                break; // UI gone; window closed.
+            }
+            last = Some(fp);
+        }
+        std::thread::sleep(HISTORY_POLL_INTERVAL);
+    }
+}
+
+/// Everything the picker renders, derived from one show request. Bundled
+/// so [`PickerApp::new`] takes data + dependencies, not eight loose args.
+struct PickerSnapshot {
+    rows: Vec<Row>,
+    /// Thumbnails decoded from disk, before GPU upload.
+    decoded_thumbs: Vec<Option<DecodedThumb>>,
+    wrap_labels: bool,
+    body_size: f32,
+}
+
 struct PickerApp {
     rows: Vec<Row>,
     thumbs: Vec<Option<Thumb>>,
@@ -174,6 +260,9 @@ struct PickerApp {
     mono_size: f32,
     /// Daemon IPC endpoint for live edits (delete); `None` disables them.
     socket: Option<std::path::PathBuf>,
+    /// Fresh history snapshots from the poller thread; the UI drains this
+    /// every frame and rebuilds when a snapshot differs.
+    updates: Receiver<Vec<HistoryItem>>,
     /// When the clear-all confirmation was armed, if it is armed.
     clear_armed_at: Option<Instant>,
     /// Which part of the selected row keyboard focus is on.
@@ -189,13 +278,17 @@ struct PickerApp {
 impl PickerApp {
     fn new(
         ctx: &egui::Context,
-        rows: Vec<Row>,
-        decoded: Vec<Option<DecodedThumb>>,
-        wrap_labels: bool,
-        body_size: f32,
+        snapshot: PickerSnapshot,
         socket: Option<std::path::PathBuf>,
+        updates: Receiver<Vec<HistoryItem>>,
         result: Arc<Mutex<Option<ShowResponse>>>,
     ) -> Self {
+        let PickerSnapshot {
+            rows,
+            decoded_thumbs: decoded,
+            wrap_labels,
+            body_size,
+        } = snapshot;
         let thumbs = decoded
             .into_iter()
             .enumerate()
@@ -217,6 +310,7 @@ impl PickerApp {
             body_size,
             mono_size: theme::mono_size(body_size),
             socket,
+            updates,
             clear_armed_at: None,
             focused_action: RowAction::Row,
             filter: String::new(),
@@ -236,6 +330,48 @@ impl PickerApp {
                     || format!("{:03}", i + 1).contains(&f)
             })
             .collect()
+    }
+
+    /// Take the freshest history snapshot from the poller, if any arrived
+    /// since the last frame, and rebuild the list from it.
+    fn drain_updates(&mut self) {
+        let mut latest = None;
+        while let Ok(items) = self.updates.try_recv() {
+            latest = Some(items);
+        }
+        if let Some(items) = latest {
+            self.apply_items(items);
+        }
+    }
+
+    /// Replace rows and thumbnails with a fresh snapshot, keeping the
+    /// selection on the same entry when it still exists.
+    fn apply_items(&mut self, items: Vec<HistoryItem>) {
+        let selected_id = self.rows.get(self.selected).map(|row| row.id);
+        let thumbs: Vec<Option<Thumb>> = items
+            .iter()
+            .map(|entry| {
+                entry
+                    .thumbnail
+                    .as_deref()
+                    .and_then(decode_png)
+                    .map(|d| Thumb {
+                        handle: self.ctx.load_texture(
+                            format!("thumb-{}", entry.id),
+                            d.image,
+                            egui::TextureOptions::LINEAR,
+                        ),
+                        native: d.native,
+                    })
+            })
+            .collect();
+        self.rows = build_rows(&items);
+        self.thumbs = thumbs;
+        self.selected = selected_id
+            .and_then(|id| self.rows.iter().position(|row| row.id == id))
+            .unwrap_or(0);
+        // Follow the (possibly new) focused row after a structural change.
+        self.scrolled_for = usize::MAX;
     }
 
     fn finish(&mut self, resp: ShowResponse) {
@@ -318,17 +454,32 @@ impl PickerApp {
         }
     }
 
-    /// Flip the pin state of the entry at `index` locally, then persist it
-    /// through the daemon in the background.
+    /// Flip the pin state of the entry at `index`, then persist it through
+    /// the daemon in the background.
     ///
-    /// Note: the daemon sorts pinned entries first, so the list order here
-    /// refreshes on the next picker opening.
+    /// The list reorders optimistically (pinned entries float to the top,
+    /// mirroring the daemon's ordering) so the effect is instant; the
+    /// poller reconciles any difference within one interval.
     fn toggle_pin_at(&mut self, index: usize) {
         let Some(row) = self.rows.get_mut(index) else {
             return;
         };
         row.pinned = !row.pinned;
         let (id, pinned) = (row.id, row.pinned);
+
+        // Optimistic local reorder: pinned entries float to the top while
+        // keeping the relative order of everything else.
+        let flags: Vec<bool> = self.rows.iter().map(|r| r.pinned).collect();
+        let order = pinned_first_order(&flags);
+        apply_permutation(&order, &mut self.rows);
+        apply_permutation(&order, &mut self.thumbs);
+        self.selected = self
+            .rows
+            .iter()
+            .position(|row| row.id == id)
+            .unwrap_or(self.selected);
+        self.scrolled_for = usize::MAX;
+        self.renumber();
 
         if let Some(socket) = self.socket.clone() {
             std::thread::Builder::new()
@@ -436,6 +587,9 @@ impl eframe::App for PickerApp {
                 self.clear_armed_at = None;
             }
         }
+
+        // Pull in any fresh history snapshot before rendering.
+        self.drain_updates();
 
         let visible = self.visible();
         if visible.is_empty() {
@@ -666,5 +820,61 @@ impl eframe::App for PickerApp {
         // Repaint continuously while a key is held so held-arrow scrolling
         // feels responsive even without widget activity.
         ctx.request_repaint_after(std::time::Duration::from_millis(100));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn item(id: i64, preview: &str, pinned: bool) -> HistoryItem {
+        HistoryItem {
+            id,
+            kind: "text".into(),
+            mime: "text/plain".into(),
+            preview: preview.into(),
+            size_bytes: preview.len() as u64,
+            created_at: 0,
+            use_count: 0,
+            pinned,
+            thumbnail: None,
+        }
+    }
+
+    #[test]
+    fn build_rows_numbers_and_carries_state() {
+        let rows = build_rows(&[item(7, "a", false), item(3, "b", true)]);
+        assert_eq!(rows[0].index_token, "[001]");
+        assert_eq!(rows[1].index_token, "[002]");
+        assert_eq!(rows[1].id, 3);
+        assert!(rows[1].pinned);
+    }
+
+    #[test]
+    fn fingerprint_ignores_order_only_when_content_matches() {
+        let a = vec![item(1, "x", false), item(2, "y", true)];
+        assert_eq!(fingerprint(&a), fingerprint(&a.clone()));
+        // Same entries, different pin state → different snapshot.
+        let b = vec![item(1, "x", true), item(2, "y", true)];
+        assert_ne!(fingerprint(&a), fingerprint(&b));
+        // New entry → different snapshot.
+        let c = vec![item(9, "z", false), item(1, "x", false), item(2, "y", true)];
+        assert_ne!(fingerprint(&a), fingerprint(&c));
+    }
+
+    #[test]
+    fn pinned_first_order_is_stable() {
+        // Only the pinned entry floats to the front; everything else keeps
+        // its relative order.
+        assert_eq!(pinned_first_order(&[false, true, false]), vec![1, 0, 2]);
+        assert_eq!(pinned_first_order(&[false, false]), vec![0, 1]);
+        assert_eq!(pinned_first_order(&[]), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn apply_permutation_reorders_every_element_once() {
+        let mut items = vec!["a", "b", "c"];
+        apply_permutation(&[2, 0, 1], &mut items);
+        assert_eq!(items, vec!["c", "a", "b"]);
     }
 }
