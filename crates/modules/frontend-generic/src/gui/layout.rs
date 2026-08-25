@@ -90,3 +90,38 @@ pub(crate) fn thumb_display_size(native: egui::Vec2) -> egui::Vec2 {
         native
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn thumb_display_size_caps_height() {
+        let native = egui::vec2(200.0, 128.0);
+        let d = thumb_display_size(native);
+        assert_eq!(d.y, theme::THUMB_HEIGHT);
+        assert!((d.x - 100.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn thumb_display_size_no_upscale() {
+        let native = egui::vec2(32.0, 32.0);
+        let d = thumb_display_size(native);
+        assert_eq!(d, native);
+    }
+
+    #[test]
+    fn thumb_display_size_exact_height() {
+        let native = egui::vec2(64.0, theme::THUMB_HEIGHT);
+        let d = thumb_display_size(native);
+        assert_eq!(d, native);
+    }
+
+    #[test]
+    fn thumb_display_size_tall_thin() {
+        let native = egui::vec2(10.0, 256.0);
+        let d = thumb_display_size(native);
+        assert_eq!(d.y, theme::THUMB_HEIGHT);
+        assert!((d.x - 2.5).abs() < 0.01);
+    }
+}

@@ -155,4 +155,87 @@ mod tests {
         };
         assert_eq!(img.preview(), "[image image/png 4.0KB] 1920x1080");
     }
+
+    #[test]
+    fn content_size_text() {
+        let c = Content::Text {
+            text: "hello".into(),
+        };
+        assert_eq!(c.size(), 5);
+    }
+
+    #[test]
+    fn content_size_empty_text() {
+        let c = Content::Text { text: "".into() };
+        assert_eq!(c.size(), 0);
+    }
+
+    #[test]
+    fn content_size_image() {
+        let c = Content::Image {
+            mime: "image/png".into(),
+            data: vec![0u8; 1024],
+            width: None,
+            height: None,
+        };
+        assert_eq!(c.size(), 1024);
+    }
+
+    #[test]
+    fn content_kind_text() {
+        assert_eq!(Content::Text { text: "x".into() }.kind(), "text");
+    }
+
+    #[test]
+    fn content_kind_image() {
+        assert_eq!(
+            Content::Image {
+                mime: "image/png".into(),
+                data: vec![],
+                width: None,
+                height: None,
+            }
+            .kind(),
+            "image"
+        );
+    }
+
+    #[test]
+    fn content_mime_text() {
+        assert_eq!(
+            Content::Text { text: "x".into() }.mime(),
+            "text/plain;charset=utf-8"
+        );
+    }
+
+    #[test]
+    fn content_mime_image() {
+        assert_eq!(
+            Content::Image {
+                mime: "image/gif".into(),
+                data: vec![],
+                width: None,
+                height: None,
+            }
+            .mime(),
+            "image/gif"
+        );
+    }
+
+    #[test]
+    fn content_bytes_text() {
+        let c = Content::Text { text: "hi".into() };
+        assert_eq!(c.bytes().as_ref(), b"hi");
+    }
+
+    #[test]
+    fn content_bytes_image() {
+        let c = Content::Image {
+            mime: "image/png".into(),
+            data: vec![1, 2, 3],
+            width: None,
+            height: None,
+        };
+        assert_eq!(c.bytes().as_ref(), &[1, 2, 3]);
+    }
 }

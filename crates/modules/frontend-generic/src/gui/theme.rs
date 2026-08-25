@@ -95,3 +95,52 @@ pub fn focus_stroke() -> egui::Stroke {
 pub fn focus_fill() -> egui::Color32 {
     FOCUS_COLOR.gamma_multiply(0.25)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mono_size_is_two_px_smaller() {
+        assert_eq!(mono_size(16.0), 14.0);
+        assert_eq!(mono_size(18.0), 16.0);
+    }
+
+    #[test]
+    fn mono_size_never_goes_below_one() {
+        assert_eq!(mono_size(0.0), 1.0);
+        assert_eq!(mono_size(1.5), 1.0);
+    }
+
+    #[test]
+    fn row_palette_selected_has_fill() {
+        let p = row_palette(true);
+        assert_eq!(p.fill, SELECTION);
+        assert_eq!(p.text, egui::Color32::WHITE);
+    }
+
+    #[test]
+    fn row_palette_unselected_is_transparent() {
+        let p = row_palette(false);
+        assert_eq!(p.fill, egui::Color32::TRANSPARENT);
+        assert_eq!(p.text, egui::Color32::WHITE);
+    }
+
+    #[test]
+    fn index_color_matches_constant() {
+        assert_eq!(index_color(), INDEX_COLOR);
+    }
+
+    #[test]
+    fn focus_stroke_is_two_point_five() {
+        let s = focus_stroke();
+        assert_eq!(s.width, 2.5);
+        assert_eq!(s.color, FOCUS_COLOR);
+    }
+
+    #[test]
+    fn focus_fill_is_dimmed() {
+        let f = focus_fill();
+        assert_eq!(f, FOCUS_COLOR.gamma_multiply(0.25));
+    }
+}

@@ -208,6 +208,33 @@ mod tests {
     }
 
     #[test]
+    fn content_hash_is_deterministic() {
+        let h1 = content_hash(b"hello");
+        let h2 = content_hash(b"hello");
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn content_hash_differs_for_different_inputs() {
+        assert_ne!(content_hash(b"a"), content_hash(b"b"));
+    }
+
+    #[test]
+    fn content_hash_is_hex_sha256() {
+        let h = content_hash(b"");
+        assert_eq!(h.len(), 64);
+        assert!(h.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn unix_now_returns_reasonable_value() {
+        let now = unix_now();
+        // Year 2020 minimum, year 2100 maximum.
+        assert!(now > 1_577_836_800);
+        assert!(now < 4_102_444_800);
+    }
+
+    #[test]
     fn insert_dedup_promotes() {
         let s = Storage::open_in_memory().unwrap();
         assert!(matches!(

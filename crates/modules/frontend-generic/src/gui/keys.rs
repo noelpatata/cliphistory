@@ -90,3 +90,110 @@ fn parse(raw: &str) -> Option<Binding> {
     };
     Some(Binding { key, ctrl })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_empty_returns_none() {
+        assert!(parse("").is_none());
+        assert!(parse("   ").is_none());
+    }
+
+    #[test]
+    fn parse_single_letter() {
+        let b = parse("p").unwrap();
+        assert_eq!(b.key, Key::P);
+        assert!(!b.ctrl);
+    }
+
+    #[test]
+    fn parse_ctrl_combo() {
+        let b = parse("ctrl+delete").unwrap();
+        assert_eq!(b.key, Key::Delete);
+        assert!(b.ctrl);
+    }
+
+    #[test]
+    fn parse_named_keys() {
+        assert_eq!(parse("enter").unwrap().key, Key::Enter);
+        assert_eq!(parse("escape").unwrap().key, Key::Escape);
+        assert_eq!(parse("arrow_up").unwrap().key, Key::ArrowUp);
+        assert_eq!(parse("up").unwrap().key, Key::ArrowUp);
+        assert_eq!(parse("arrow_down").unwrap().key, Key::ArrowDown);
+        assert_eq!(parse("down").unwrap().key, Key::ArrowDown);
+        assert_eq!(parse("arrow_left").unwrap().key, Key::ArrowLeft);
+        assert_eq!(parse("arrow_right").unwrap().key, Key::ArrowRight);
+        assert_eq!(parse("backspace").unwrap().key, Key::Backspace);
+        assert_eq!(parse("home").unwrap().key, Key::Home);
+        assert_eq!(parse("end").unwrap().key, Key::End);
+        assert_eq!(parse("page_up").unwrap().key, Key::PageUp);
+        assert_eq!(parse("page_down").unwrap().key, Key::PageDown);
+        assert_eq!(parse("insert").unwrap().key, Key::Insert);
+    }
+
+    #[test]
+    fn parse_is_case_insensitive() {
+        assert_eq!(parse("Enter").unwrap().key, Key::Enter);
+        assert_eq!(parse("CTRL+Delete").unwrap().key, Key::Delete);
+        assert!(parse("CTRL+Delete").unwrap().ctrl);
+    }
+
+    #[test]
+    fn parse_unknown_returns_none() {
+        assert!(parse("banana").is_none());
+    }
+
+    #[test]
+    fn resolve_uses_config_values() {
+        let bindings = cliphistory_proto::KeyBindings {
+            move_up: "down".into(),
+            move_down: "up".into(),
+            confirm: "escape".into(),
+            dismiss: "enter".into(),
+            delete_entry: "backspace".into(),
+            clear_all: "p".into(),
+            toggle_pin: "x".into(),
+            action_next: "left".into(),
+            action_prev: "right".into(),
+        };
+        let r = resolve(&bindings);
+        assert_eq!(r.move_up.key, Key::ArrowDown);
+        assert_eq!(r.move_down.key, Key::ArrowUp);
+        assert_eq!(r.confirm.key, Key::Escape);
+        assert_eq!(r.dismiss.key, Key::Enter);
+        assert_eq!(r.delete_entry.key, Key::Backspace);
+        assert_eq!(r.clear_all.key, Key::P);
+        assert!(!r.clear_all.ctrl);
+        assert_eq!(r.toggle_pin.key, Key::X);
+        assert_eq!(r.action_next.key, Key::ArrowLeft);
+        assert_eq!(r.action_prev.key, Key::ArrowRight);
+    }
+
+    #[test]
+    fn resolve_falls_back_on_invalid() {
+        let bindings = cliphistory_proto::KeyBindings {
+            move_up: "banana".into(),
+            ..cliphistory_proto::KeyBindings::default()
+        };
+        let r = resolve(&bindings);
+        assert_eq!(r.move_up.key, Key::ArrowUp);
+    }
+
+    #[test]
+    fn default_bindings_match_hardcoded_values() {
+        let r = resolve(&cliphistory_proto::KeyBindings::default());
+        assert_eq!(r.move_up.key, Key::ArrowUp);
+        assert_eq!(r.move_down.key, Key::ArrowDown);
+        assert_eq!(r.confirm.key, Key::Enter);
+        assert_eq!(r.dismiss.key, Key::Escape);
+        assert_eq!(r.delete_entry.key, Key::Delete);
+        assert_eq!(r.clear_all.key, Key::Delete);
+        assert!(r.clear_all.ctrl);
+        assert_eq!(r.toggle_pin.key, Key::P);
+        assert!(r.toggle_pin.ctrl);
+        assert_eq!(r.action_next.key, Key::ArrowRight);
+        assert_eq!(r.action_prev.key, Key::ArrowLeft);
+    }
+}

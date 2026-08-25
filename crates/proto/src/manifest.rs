@@ -81,4 +81,108 @@ mod tests {
         assert_eq!(m.missing_tools(|_| true), Vec::<String>::new());
         assert_eq!(m.missing_tools(|_| false), vec!["xclip".to_string()]);
     }
+
+    #[test]
+    fn module_kind_as_str() {
+        assert_eq!(ModuleKind::Clipboard.as_str(), "clipboard");
+        assert_eq!(ModuleKind::Frontend.as_str(), "frontend");
+        assert_eq!(ModuleKind::Paster.as_str(), "paster");
+    }
+
+    #[test]
+    fn has_capability_true() {
+        let m = ModuleManifest {
+            id: "test".into(),
+            kind: ModuleKind::Clipboard,
+            version: "0.1.0".into(),
+            protocol_version: PROTOCOL_VERSION,
+            capabilities: vec!["read".into(), "write".into()],
+            requires: vec![],
+            features: vec![],
+            description: String::new(),
+        };
+        assert!(m.has_capability("read"));
+        assert!(m.has_capability("write"));
+    }
+
+    #[test]
+    fn has_capability_false() {
+        let m = ModuleManifest {
+            id: "test".into(),
+            kind: ModuleKind::Clipboard,
+            version: "0.1.0".into(),
+            protocol_version: PROTOCOL_VERSION,
+            capabilities: vec!["read".into()],
+            requires: vec![],
+            features: vec![],
+            description: String::new(),
+        };
+        assert!(!m.has_capability("write"));
+        assert!(!m.has_capability(""));
+    }
+
+    #[test]
+    fn has_capability_empty_list() {
+        let m = ModuleManifest {
+            id: "test".into(),
+            kind: ModuleKind::Clipboard,
+            version: "0.1.0".into(),
+            protocol_version: PROTOCOL_VERSION,
+            capabilities: vec![],
+            requires: vec![],
+            features: vec![],
+            description: String::new(),
+        };
+        assert!(!m.has_capability("read"));
+    }
+
+    #[test]
+    fn manifest_roundtrip() {
+        let m = ModuleManifest {
+            id: "test-module".into(),
+            kind: ModuleKind::Frontend,
+            version: "1.2.3".into(),
+            protocol_version: 99,
+            capabilities: vec!["render".into()],
+            requires: vec!["fontconfig".into()],
+            features: vec!["images".into()],
+            description: "A test module".into(),
+        };
+        let json = serde_json::to_string(&m).unwrap();
+        let m2: ModuleManifest = serde_json::from_str(&json).unwrap();
+        assert_eq!(m, m2);
+    }
+
+    #[test]
+    fn module_kind_serializes_snake_case() {
+        assert_eq!(
+            serde_json::to_string(&ModuleKind::Clipboard).unwrap(),
+            "\"clipboard\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ModuleKind::Frontend).unwrap(),
+            "\"frontend\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ModuleKind::Paster).unwrap(),
+            "\"paster\""
+        );
+    }
+
+    #[test]
+    fn manifest_defaults() {
+        let m = ModuleManifest {
+            id: "x".into(),
+            kind: ModuleKind::Paster,
+            version: "0.1.0".into(),
+            protocol_version: PROTOCOL_VERSION,
+            capabilities: vec![],
+            requires: vec![],
+            features: vec![],
+            description: String::new(),
+        };
+        assert!(m.features.is_empty());
+        assert!(m.capabilities.is_empty());
+        assert!(m.requires.is_empty());
+    }
 }

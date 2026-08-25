@@ -174,4 +174,80 @@ mod tests {
         let b = vec![item(1, "x", true), item(2, "y", true)];
         assert_ne!(model::fingerprint(&a), model::fingerprint(&b));
     }
+
+    #[test]
+    fn build_rows_empty() {
+        let rows = build_rows(&[]);
+        assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn pinned_first_order_groups_pinned_before_unpinned() {
+        use model::{apply_permutation, pinned_first_order};
+        let rows = model::build_rows(&[
+            item(1, "a", false),
+            item(2, "b", true),
+            item(3, "c", true),
+            item(4, "d", false),
+        ]);
+        let order = pinned_first_order(&rows);
+        assert_eq!(order.len(), 4);
+        // Indices 1 and 2 are pinned, must come first.
+        assert!(order[0] == 1 || order[0] == 2);
+        assert!(order[1] == 1 || order[1] == 2);
+        assert_ne!(order[0], order[1]);
+        // Indices 0 and 3 are unpinned, must come last.
+        assert!(order[2] == 0 || order[2] == 3);
+        assert!(order[3] == 0 || order[3] == 3);
+    }
+
+    #[test]
+    fn pinned_first_order_respects_pinned_at() {
+        use model::{apply_permutation, pinned_first_order};
+        let mut a = item(1, "old", true);
+        a.pinned_at = Some(10);
+        let mut b = item(2, "new", true);
+        b.pinned_at = Some(5);
+        let rows = model::build_rows(&[a, b]);
+        let order = pinned_first_order(&rows);
+        // Lower pinned_at first: index 1 (pinned_at=5) before index 0 (pinned_at=10).
+        assert_eq!(order[0], 1);
+        assert_eq!(order[1], 0);
+    }
+
+    #[test]
+    fn apply_permutation_reorders() {
+        use model::apply_permutation;
+        let mut v = vec!["a", "b", "c"];
+        apply_permutation(&[2, 0, 1], &mut v);
+        assert_eq!(v, vec!["c", "a", "b"]);
+    }
+
+    #[test]
+    fn apply_permutation_identity() {
+        use model::apply_permutation;
+        let mut v = vec![10, 20, 30];
+        apply_permutation(&[0, 1, 2], &mut v);
+        assert_eq!(v, vec![10, 20, 30]);
+    }
+
+    #[test]
+    fn apply_permutation_empty() {
+        use model::apply_permutation;
+        let mut v: Vec<i32> = vec![];
+        apply_permutation(&[], &mut v);
+        assert!(v.is_empty());
+    }
+
+    #[test]
+    fn fingerprint_empty_is_zero_like() {
+        assert_eq!(model::fingerprint(&[]), model::fingerprint(&[]));
+    }
+
+    #[test]
+    fn fingerprint_differs_on_id_change() {
+        let a = vec![item(1, "x", false)];
+        let b = vec![item(2, "x", false)];
+        assert_ne!(model::fingerprint(&a), model::fingerprint(&b));
+    }
 }

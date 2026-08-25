@@ -24,16 +24,16 @@ pub(crate) fn sync_history(socket: std::path::PathBuf, tx: Sender<Vec<HistoryIte
             Ok(mut stream) => {
                 failures = 0;
                 let mut last = None::<u64>;
-                loop {
-                    match stream.next() {
-                        Some(Ok(items)) => {
+                while let Some(msg) = stream.next() {
+                    match msg {
+                        Ok(items) => {
                             let fp = fingerprint(&items);
                             if last != Some(fp) && tx.send(items).is_err() {
                                 return; // UI gone; window closed.
                             }
                             last = Some(fp);
                         }
-                        Some(Err(_)) | None => break, // lost mid-stream: reconnect.
+                        Err(_) => break, // lost mid-stream: reconnect.
                     }
                 }
             }

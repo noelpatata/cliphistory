@@ -304,4 +304,80 @@ mod tests {
         );
         assert_eq!(expand_path(Path::new("/tmp/x")), PathBuf::from("/tmp/x"));
     }
+
+    #[test]
+    fn resolved_db_path_uses_default_when_empty() {
+        let cfg: Config = toml::from_str("").unwrap();
+        let p = cfg.storage.resolved_db_path();
+        assert!(p.ends_with(c::DB_FILENAME));
+    }
+
+    #[test]
+    fn resolved_db_path_expands_custom() {
+        let cfg: Config = toml::from_str("[storage]\ndb_path = \"/tmp/test.db\"").unwrap();
+        assert_eq!(
+            cfg.storage.resolved_db_path(),
+            PathBuf::from("/tmp/test.db")
+        );
+    }
+
+    #[test]
+    fn resolved_install_dir_uses_local_dir_when_set() {
+        let cfg: Config = toml::from_str("[modules]\nlocal_dir = \"/tmp/dev-modules\"").unwrap();
+        assert_eq!(
+            cfg.modules.resolved_install_dir(),
+            PathBuf::from("/tmp/dev-modules")
+        );
+    }
+
+    #[test]
+    fn resolved_install_dir_uses_default_when_empty() {
+        let cfg: Config = toml::from_str("").unwrap();
+        let d = cfg.modules.resolved_install_dir();
+        assert!(d.ends_with(c::MODULES_DIRNAME));
+    }
+
+    #[test]
+    fn uses_local_dir_true_when_set() {
+        let cfg: Config = toml::from_str("[modules]\nlocal_dir = \"/tmp\"").unwrap();
+        assert!(cfg.modules.uses_local_dir());
+    }
+
+    #[test]
+    fn uses_local_dir_false_when_unset() {
+        let cfg: Config = toml::from_str("").unwrap();
+        assert!(!cfg.modules.uses_local_dir());
+    }
+
+    #[test]
+    fn config_dir_is_nonempty() {
+        let d = config_dir();
+        assert!(!d.as_os_str().is_empty());
+        assert!(d.to_string_lossy().contains("cliphistory"));
+    }
+
+    #[test]
+    fn data_dir_is_nonempty() {
+        let d = data_dir();
+        assert!(!d.as_os_str().is_empty());
+    }
+
+    #[test]
+    fn runtime_dir_is_nonempty() {
+        let d = runtime_dir();
+        assert!(!d.as_os_str().is_empty());
+    }
+
+    #[test]
+    fn socket_path_ends_with_filename() {
+        let p = socket_path();
+        assert!(p.ends_with(c::SOCKET_FILENAME));
+    }
+
+    #[test]
+    fn keys_defaults_are_valid() {
+        let cfg: Config = toml::from_str("").unwrap();
+        // Must parse without panicking.
+        let _ = &cfg.frontend.keys;
+    }
 }
