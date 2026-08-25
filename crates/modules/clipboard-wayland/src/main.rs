@@ -35,10 +35,7 @@ fn manifest() -> ModuleManifest {
 struct WaylandReader;
 
 impl PollingReader for WaylandReader {
-    // No poll_interval_ms override: this backend is strictly event-driven
-    // (see `attach_wake`). The trait's default interval only applies if the
-    // watcher unexpectedly cannot start — a state `probe` already makes
-    // near-impossible, since reads and events need the same protocols.
+    // Strictly event-driven (see `attach_wake`); no polling interval.
 
     /// Fail fast when no compositor/data-control exists. An empty clipboard
     /// is a normal state, not an error — tolerated errors are reported via
@@ -106,17 +103,18 @@ impl PollingReader for WaylandReader {
     }
 
     /// Event-driven change detection: the watcher sleeps in the
-    /// compositor's dispatch loop and wakes us only on real changes. When
-    /// it cannot start (no data-control protocol), returning `false` makes
-    /// the shared loop fall back to timed sampling.
-    fn attach_wake(&self, tx: std::sync::mpsc::Sender<Wake>) -> bool {
-        let started = watcher::spawn(tx);
-        if started {
+    /// compositor's dispatch loop and wakes us only on real changes.
+    /// Mandatory — without data-control events copies cannot be detected
+    /// at all (the read path needs the same protocol).
+    fn attach_wake(&self, tx: std::sync::mpsc::Sender<Wake>) {
+        if watcher::spawn(tx) {
             log::info!("clipboard watcher attached (event-driven)");
         } else {
-            log::info!("no data-control events available; falling back to polling");
+            log::error!(
+                "no data-control protocol available; clipboard change \
+                 detection is impossible on this compositor"
+            );
         }
-        started
     }
 }
 

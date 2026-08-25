@@ -142,12 +142,12 @@ Module kinds: `clipboard-*` (read the system clipboard), `frontend-*`
 (render the picker), `paster-*` (replay the paste chord — `paster-uinput`
 is kernel-level and covers Wayland, X11 and TTY alike).
 
-Change detection differs by platform: on **Wayland**,
-`clipboard-wayland` subscribes to the compositor's data-control events and
-uses no CPU while the clipboard is idle — strictly event-driven, no
-polling. On **X11**, change events do not exist in the protocol, so
-`clipboard-x11` necessarily polls (`POLL_INTERVAL_MS`) — that is an X11
-limitation, not wasted work.
+Change detection is event-driven on both platforms — the clipboard reader
+sleeps until something actually happens, costing no CPU while idle:
+**Wayland** uses compositor data-control `selection` events; **X11** uses
+XFixes `SelectionNotify` on a registered window. There is no polling
+anywhere; a server or compositor without the required change events
+cannot be supported.
 
 `frontend-generic` is the only frontend you need: a **built-in egui window**
 (X11 + Wayland, nothing to install). Click an entry, or type in the filter

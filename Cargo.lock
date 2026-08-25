@@ -447,8 +447,10 @@ dependencies = [
  "cliphistory-module-common",
  "cliphistory-proto",
  "hex",
+ "log",
  "serde_json",
  "sha2",
+ "x11rb",
 ]
 
 [[package]]

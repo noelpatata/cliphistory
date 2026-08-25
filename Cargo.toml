@@ -38,6 +38,7 @@ env_logger = "0.11"
 tempfile = "3"
 libc = "0.2"
 wl-clipboard-rs = "0.9"
+x11rb = { version = "0.13", features = ["xfixes"] }
 eframe = { version = "0.31", default-features = false, features = ["glow", "x11", "wayland", "default_fonts"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 wayland-client = "0.31"

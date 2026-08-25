@@ -5,31 +5,20 @@
 //! clipboard-change detection and content deduplication by hash. Backends
 //! only implement [`PollingReader`]; this module owns the loop.
 //!
-//! Change detection comes in two flavours:
+//! Change detection is **event-driven on both platforms** — the loop
+//! sleeps in `recv()` until something actually happens:
 //!
-//! * **event-driven** — the backend attaches a watcher thread via
-//!   [`PollingReader::attach_wake`] (Wayland data-control events) and the
-//!   loop sleeps in `recv()`, waking only for real changes or control
-//!   frames. A slow safety-net sample every [`EVENT_SAMPLE_FLOOR`] guards
-//!   against missed events.
-//! * **polling** — backends without any change notification mechanism
-//!   fall back to sampling every [`PollingReader::poll_interval_ms`].
+//! * **Wayland** — data-control `selection` events from the compositor.
+//! * **X11** — XFixes `SelectionNotify` on a registered window.
 //!
-//! This split is deliberate: X11's clipboard protocol has no change
-//! notification mechanism at all, so polling there is a platform
-//! limitation, not an implementation choice. Wayland is strictly
-//! event-driven.
+//! There is no polling anywhere. A backend whose platform lacks change
+//! events cannot detect copies and therefore cannot be supported; the
+//! event source is mandatory (see [`PollingReader::attach_wake`]).
 
 use crate::{emit, next_frame};
 use anyhow::Result;
 use cliphistory_proto::{ClipboardToHost, Content, HostToClipboard};
 use std::sync::mpsc;
-use std::time::Duration;
-
-/// In event-driven mode, force one sample at least this often as a
-/// safety net against missed compositor events. Purely a correctness
-/// guard: it costs one cheap read per interval.
-const EVENT_SAMPLE_FLOOR: Duration = Duration::from_secs(30);
 
 /// What woke the main loop.
 pub enum Wake {
@@ -41,14 +30,6 @@ pub enum Wake {
 
 /// A platform clipboard backend driven by [`run_event_loop`].
 pub trait PollingReader {
-    /// Sampling interval used **only** when no change notifications are
-    /// available, i.e. [`attach_wake`](Self::attach_wake) returned `false`
-    /// (X11: the protocol has no change events). Event-driven backends
-    /// (Wayland data-control) never poll and may ignore this entirely.
-    fn poll_interval_ms(&self) -> u64 {
-        500
-    }
-
     /// Fail-fast startup check (compositor present, tool installed…).
     /// Tolerated conditions are reported by the implementation itself via
     /// `Error` frames; returning `Err` kills the module.
@@ -61,24 +42,22 @@ pub trait PollingReader {
     /// Implementations decide whether to serve inline or detached.
     fn claim_async(&self, content: &Content);
 
-    /// Attach a change-notification source: implementations capable of
-    /// detecting clipboard changes spawn their watcher and send
-    /// [`Wake::Changed`] on `tx`, then return `true`. Poll-only backends
-    /// return `false` unchanged.
+    /// Attach the platform's change-notification source: spawn a watcher
+    /// that sends [`Wake::Changed`] on every observed clipboard change.
     ///
-    /// The default is polling: sleep through [`Self::poll_interval_ms`] and
-    /// let the loop sample on timeout.
-    fn attach_wake(&self, _tx: mpsc::Sender<Wake>) -> bool {
-        false
-    }
+    /// This source is mandatory — without it copies cannot be detected —
+    /// so implementations are expected to require whatever platform
+    /// facility provides it (Wayland data-control, X11 XFixes) exactly as
+    /// their read path already does. Internal failures are logged and may
+    /// silence further detection; the supervisor restarts the module if
+    /// its connection drops.
+    fn attach_wake(&self, tx: mpsc::Sender<Wake>);
 }
 
-/// Run the reader protocol over stdio until `Stop` or EOF.
+/// Run the reader protocol over stdio until `Stop`, EOF or watcher death.
 ///
 /// Sample errors are reported as `Error` frames but silenced after three
 /// consecutive occurrences so a dying session never spams the host.
-/// Event-driven backends sleep between real changes; poll-only ones wake
-/// every `poll_interval_ms`.
 pub fn run_event_loop<R: PollingReader>(reader: &mut R) -> Result<()> {
     // stdin -> control frames
     let (tx, rx) = mpsc::channel::<Wake>();
@@ -101,47 +80,22 @@ pub fn run_event_loop<R: PollingReader>(reader: &mut R) -> Result<()> {
     emit(&ClipboardToHost::Ready {
         protocol_version: cliphistory_proto::PROTOCOL_VERSION,
     })?;
-
-    // Event-driven backends register a watcher; poll-only ones drive the
-    // loop with timeouts instead.
-    let event_driven = reader.attach_wake(tx);
-    let poll = (!event_driven).then(|| Duration::from_millis(reader.poll_interval_ms()));
+    reader.attach_wake(tx);
 
     let mut last_hash = String::new();
     let mut consecutive_failures: u32 = 0;
 
     loop {
-        use std::sync::mpsc::RecvTimeoutError;
-        enum Tick {
-            Wake(Wake),
-            Timeout,
-        }
-        // Event-driven mode blocks until something happens (with a slow
-        // safety-net timeout); polling mode wakes every interval.
-        let tick = if event_driven {
-            match rx.recv_timeout(EVENT_SAMPLE_FLOOR) {
-                Ok(wake) => Tick::Wake(wake),
-                Err(RecvTimeoutError::Timeout) => Tick::Timeout,
-                Err(RecvTimeoutError::Disconnected) => return Ok(()),
-            }
-        } else {
-            match rx.recv_timeout(poll.expect("polling mode has an interval")) {
-                Ok(wake) => Tick::Wake(wake),
-                Err(RecvTimeoutError::Timeout) => Tick::Timeout,
-                Err(RecvTimeoutError::Disconnected) => return Ok(()),
-            }
-        };
-        match tick {
-            Tick::Wake(Wake::Frame(HostToClipboard::Ping)) => emit(&ClipboardToHost::Pong)?,
-            Tick::Wake(Wake::Frame(HostToClipboard::SetClipboard { content })) => {
+        match rx.recv() {
+            Ok(Wake::Frame(HostToClipboard::Ping)) => emit(&ClipboardToHost::Pong)?,
+            Ok(Wake::Frame(HostToClipboard::SetClipboard { content })) => {
                 reader.claim_async(&content)
             }
-            Tick::Wake(Wake::Frame(HostToClipboard::Stop)) => return Ok(()),
-            // Real change (event mode) or scheduled sample (polling mode /
-            // safety net). Dedup makes redundant samples cheap.
-            Tick::Wake(Wake::Changed) | Tick::Timeout => {
-                sample(reader, &mut last_hash, &mut consecutive_failures)?
-            }
+            Ok(Wake::Frame(HostToClipboard::Stop)) => return Ok(()),
+            // Real change; hash-dedup makes redundant wakes cheap.
+            Ok(Wake::Changed) => sample(reader, &mut last_hash, &mut consecutive_failures)?,
+            // Both senders gone: stdin closed *and* the watcher died.
+            Err(_) => return Ok(()),
         }
     }
 }

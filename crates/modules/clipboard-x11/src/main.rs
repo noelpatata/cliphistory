@@ -1,22 +1,24 @@
 //! X11 clipboard reader backed by `xclip`.
 //!
-//! **This module must poll — X11 has no usable clipboard-change events.**
-//! The X11 selection protocol is purely synchronous: a client cannot
-//! subscribe to "clipboard changed"; it can only ask the current owner for
-//! contents on demand (and the owner may be gone by then). There is no
-//! daemon-side or compositor-side notification hook equivalent to
-//! Wayland's data-control events, so periodic sampling with hash
-//! deduplication is the only correct way to detect copies here. This is an
-//! X11 protocol limitation, not an implementation defect.
+//! Change detection is **event-driven** via the XFixes extension: a hidden
+//! window registered with `XFixesSelectSelectionInput` receives an
+//! XFixes `SelectionNotify` whenever any client takes ownership of the
+//! CLIPBOARD selection, so the watcher thread sleeps in the X event queue
+//! and costs zero CPU while nothing happens (see [`watcher`]). Core X11
+//! alone has no such notification — XFixes ≥ 2 is what makes events
+//! possible, and servers without it cannot be supported because there is
+//! no polling fallback.
 //!
-//! The CLIPBOARD selection is sampled every `POLL_INTERVAL_MS` and an
-//! event is emitted whenever the content hash changes. Writes go through
-//! `xclip` as well. The lifecycle lives in
-//! [`cliphistory_module_common::reader`]; this file is the platform adapter.
+//! Contents are read and written through `xclip` (TARGETS negotiation and
+//! INCR transfers for free); only change detection lives here. The
+//! lifecycle lives in [`cliphistory_module_common::reader`]; this file is
+//! the platform adapter.
+
+mod watcher;
 
 use anyhow::{Context, Result};
 use cliphistory_module_common as mcommon;
-use cliphistory_module_common::reader::{run_event_loop, PollingReader};
+use cliphistory_module_common::reader::{run_event_loop, PollingReader, Wake};
 use cliphistory_proto::{
     ClipboardToHost, Content, ModuleKind, ModuleManifest, CAP_READ, CAP_WRITE, PROTOCOL_VERSION,
 };
@@ -24,8 +26,6 @@ use std::process::{Command, Stdio};
 
 const MODULE_ID: &str = "clipboard-x11";
 const TOOL: &str = "xclip";
-/// How often the CLIPBOARD selection is re-sampled.
-const POLL_INTERVAL_MS: u64 = 500;
 /// MIME types probed in order; first hit wins.
 const IMAGE_MIME: &str = "image/png";
 
@@ -38,16 +38,14 @@ fn manifest() -> ModuleManifest {
         capabilities: vec![CAP_READ.into(), CAP_WRITE.into()],
         features: vec![],
         requires: vec![TOOL.into()],
-        description: "Polls the X11 CLIPBOARD selection via xclip".into(),
+        description: "Watches the X11 CLIPBOARD selection via XFixes events (xclip I/O)".into(),
     }
 }
 
 struct X11Reader;
 
 impl PollingReader for X11Reader {
-    fn poll_interval_ms(&self) -> u64 {
-        POLL_INTERVAL_MS
-    }
+    // Strictly event-driven (see `attach_wake`); no polling interval.
 
     /// Fail fast with a precise message when xclip is missing.
     fn probe(&mut self) -> Result<()> {
@@ -102,6 +100,19 @@ impl PollingReader for X11Reader {
             }
         });
     }
+
+    /// Event-driven change detection via XFixes `SelectionNotify`.
+    /// Mandatory — without XFixes copies cannot be detected at all.
+    fn attach_wake(&self, tx: std::sync::mpsc::Sender<Wake>) {
+        if watcher::spawn(tx) {
+            log::info!("clipboard watcher attached (event-driven via XFixes)");
+        } else {
+            log::error!(
+                "XFixes unavailable; clipboard change detection is \
+                 impossible on this server"
+            );
+        }
+    }
 }
 
 fn main() -> std::process::ExitCode {
@@ -109,6 +120,7 @@ fn main() -> std::process::ExitCode {
     if args.iter().any(|a| a == "--manifest") {
         return mcommon::manifest_main(manifest);
     }
+    mcommon::init_logging();
 
     match run() {
         Ok(()) => std::process::ExitCode::SUCCESS,
